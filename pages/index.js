@@ -34,6 +34,28 @@ function parseDate(s) {
   return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10))
 }
 
+// 予約可能な最も近い日を計算
+function computeDateMin(now, hols) {
+  const h = hols || {}
+  for (let i = 1; i <= 14; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i)
+    const ymd = toYMD(d)
+    const dow = d.getDay()
+    const isHol = !!h[ymd.replace(/-/g, '/')]
+    const isSatSun = dow === 0 || dow === 6
+    let dl
+    if (isHol) {
+      dl = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 3, 22, 0, 0, 0)
+    } else if (isSatSun) {
+      dl = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((dow + 3) % 7), 22, 0, 0, 0)
+    } else {
+      dl = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 2, 22, 0, 0, 0)
+    }
+    if (now < dl) return ymd
+  }
+  return toYMD(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14))
+}
+
 function TimeGrid({ value, onChange }) {
   return (
     <div className="t-grid">
@@ -236,13 +258,18 @@ export default function Home() {
 
   useEffect(() => {
     const now = new Date()
-    const mn = new Date(now)
-    mn.setDate(now.getDate() + 1)
+    setDateMin(computeDateMin(now, {}))
     const mx = new Date(now)
     mx.setFullYear(mx.getFullYear() + 1)
-    setDateMin(toYMD(mn))
     setDateMax(toYMD(mx))
   }, [])
+
+  // 祝日データが読み込まれたら dateMin を再計算
+  useEffect(() => {
+    if (Object.keys(holidays).length > 0) {
+      setDateMin(computeDateMin(new Date(), holidays))
+    }
+  }, [holidays])
 
   useEffect(() => {
     window.scrollTo(0, 0)
@@ -250,13 +277,38 @@ export default function Home() {
 
   // ===== バリデーション =====
   function goConfirm() {
-    if (!selDate) return setInputErr('ご来店日を選択してください')
-    if (deadlinePassed(selDate)) return setInputErr('選択された日付は予約受付期限を過ぎています')
-    if (!selGuest) return setInputErr('人数を選択してください')
-    if (isKasshiki && !selCount) return setInputErr('人数を選択してください')
-    if (!selTime) return setInputErr('来店時間を選択してください')
-    if (!name.trim()) return setInputErr('お名前を入力してください')
-    if (!phone.trim()) return setInputErr('電話番号を入力してください')
+    console.log('[goConfirm] date:', selDate, 'guest:', selGuest, 'count:', selCount, 'time:', selTime, 'name:', name.trim(), 'phone:', phone.trim())
+    if (!selDate) {
+      console.log('[goConfirm] BLOCKED: no date')
+      return setInputErr('ご来店日を選択してください')
+    }
+    const dl = getDeadline(selDate)
+    console.log('[goConfirm] deadline:', dl, 'now:', new Date(), 'passed:', new Date() > dl)
+    if (new Date() > dl) {
+      console.log('[goConfirm] BLOCKED: deadline passed')
+      return setInputErr('選択された日付は予約受付期限を過ぎています')
+    }
+    if (!selGuest) {
+      console.log('[goConfirm] BLOCKED: no guest')
+      return setInputErr('人数を選択してください')
+    }
+    if (isKasshiki && !selCount) {
+      console.log('[goConfirm] BLOCKED: kasshiki no count')
+      return setInputErr('人数を選択してください')
+    }
+    if (!selTime) {
+      console.log('[goConfirm] BLOCKED: no time')
+      return setInputErr('来店時間を選択してください')
+    }
+    if (!name.trim()) {
+      console.log('[goConfirm] BLOCKED: no name')
+      return setInputErr('お名前を入力してください')
+    }
+    if (!phone.trim()) {
+      console.log('[goConfirm] BLOCKED: no phone')
+      return setInputErr('電話番号を入力してください')
+    }
+    console.log('[goConfirm] ALL PASSED → screen: confirm')
     setInputErr('')
     setScreen('confirm')
   }
@@ -405,7 +457,7 @@ export default function Home() {
                 <div className="course-nm">季節の貝焼きコース</div>
                 <div className="course-pr">¥11,000<small>（税込）</small></div>
               </div>
-              <div className="course-dc">旬の野菜と貝をふんだんに使ったコースメニュー</div>
+              <div className="course-dc">旬の貝と野菜をふんだんに使ったコースメニュー</div>
               <div>
                 <span className="tag">約2時間30分</span>
               </div>
@@ -755,8 +807,9 @@ export default function Home() {
             <div className="card-lbl">📝　変更対象の予約</div>
             <div className="card-body">
               <div className="chg-current">
-                現在の予約：{fmtDate(changingRes?.date)}　{changingRes?.time}〜{changingRes?.endTime}
-                <br />{changingRes?.guests}名様　{changingRes?.course}
+                {fmtDate(changingRes?.date)}
+                <br />{changingRes?.time}〜{changingRes?.endTime}
+                <br />{changingRes?.guests}名様
               </div>
             </div>
           </div>
@@ -799,7 +852,7 @@ export default function Home() {
             <div className="cf-row">
               <div className="cf-lbl">変更前</div>
               <div className="cf-val" style={{ color: 'var(--sub)' }}>
-                {fmtDate(changingRes?.date)}　{changingRes?.time}〜{changingRes?.endTime}
+                {fmtDate(changingRes?.date)}<br />{changingRes?.time}〜{changingRes?.endTime}
               </div>
             </div>
             <div className="cf-row">
