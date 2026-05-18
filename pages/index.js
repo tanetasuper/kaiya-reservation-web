@@ -344,6 +344,7 @@ export default function Home() {
     console.log('[goConfirm] PASS 6')
 
     console.log('[goConfirm] ALL PASSED → setScreen(confirm)')
+    alert('[SHOW] 確認画面に遷移します → setScreen(confirm) を呼びます')
     setInputErr('')
     setScreen('confirm')
   }
