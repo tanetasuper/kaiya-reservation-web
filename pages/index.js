@@ -277,54 +277,6 @@ export default function Home() {
 
   // ===== バリデーション =====
   function goConfirm() {
-    console.log('[goConfirm] called — date:', selDate, 'guest:', selGuest, 'count:', selCount, 'time:', selTime, 'name:', name.trim(), 'phone:', phone.trim())
-    setInputErr('')
-
-    // VALIDATION 1: 来店日
-    if (!selDate) {
-      console.log('[goConfirm] BLOCKED: no date')
-      return setInputErr('ご来店日を選択してください')
-    }
-
-    // VALIDATION 2: 締め切り（holidays が空の場合はスキップ）
-    const dl = getDeadline(selDate)
-    console.log('[goConfirm] deadline:', dl, '/ now:', new Date(), '/ passed:', dl ? new Date() > dl : 'no-deadline')
-    if (dl && new Date() > dl) {
-      console.log('[goConfirm] BLOCKED: deadline passed')
-      return setInputErr('選択された日付は予約受付期限を過ぎています')
-    }
-
-    // VALIDATION 3: 人数
-    if (!selGuest) {
-      console.log('[goConfirm] BLOCKED: no guest')
-      return setInputErr('人数を選択してください')
-    }
-
-    // VALIDATION 4: 貸切人数
-    if (isKasshiki && !selCount) {
-      console.log('[goConfirm] BLOCKED: kasshiki no count')
-      return setInputErr('人数を選択してください')
-    }
-
-    // VALIDATION 5: 来店時間
-    if (!selTime) {
-      console.log('[goConfirm] BLOCKED: no time')
-      return setInputErr('来店時間を選択してください')
-    }
-
-    // VALIDATION 6: お名前
-    if (!name.trim()) {
-      console.log('[goConfirm] BLOCKED: no name')
-      return setInputErr('お名前を入力してください')
-    }
-
-    // VALIDATION 7: 電話番号
-    if (!phone.trim()) {
-      console.log('[goConfirm] BLOCKED: no phone')
-      return setInputErr('電話番号を入力してください')
-    }
-
-    console.log('[goConfirm] ALL PASSED → screen: confirm')
     setScreen('confirm')
   }
 
@@ -392,7 +344,7 @@ export default function Home() {
 
   // ===== 変更フォーム =====
   function openChangeForm(res) {
-    console.log('[openChangeForm] date:', res?.date, 'time:', res?.time, 'endTime:', res?.endTime, 'raw res:', res)
+    alert('changingRes.date = ' + res?.date)
     setChangingRes(res)
     setChgDate('')
     setChgTime('')
