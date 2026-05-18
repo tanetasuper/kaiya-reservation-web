@@ -286,67 +286,43 @@ export default function Home() {
 
   // ===== バリデーション =====
   function goConfirm() {
-    alert('[START] goConfirm開始')
-    console.log('[goConfirm] START', { selDate, selGuest, selCount, selTime, name: name.trim(), phone: phone.trim(), isKasshiki })
+    try {
+      alert('[START] goConfirm開始')
 
-    console.log('[goConfirm] CHECK 1: selDate =', JSON.stringify(selDate))
-    if (!selDate) {
-      const msg = 'ご来店日を選択してください'
-      console.log('[goConfirm] BLOCKED at 1:', msg)
-      alert('[1] ' + msg)
-      return setInputErr(msg)
+      alert('[2] selDate=' + String(selDate) + ' / selGuest=' + String(selGuest) + ' / selTime=' + String(selTime))
+      alert('[3] name=' + String(name) + ' / phone=' + String(phone))
+
+      if (!selDate) {
+        alert('[BLOCK1] 日付未入力')
+        return setInputErr('ご来店日を選択してください')
+      }
+      if (!selGuest) {
+        alert('[BLOCK2] 人数未選択')
+        return setInputErr('人数を選択してください')
+      }
+      if (isKasshiki && !selCount) {
+        alert('[BLOCK3] 貸切人数未選択')
+        return setInputErr('人数を選択してください')
+      }
+      if (!selTime) {
+        alert('[BLOCK4] 時間未選択')
+        return setInputErr('来店時間を選択してください')
+      }
+      if (!String(name).trim()) {
+        alert('[BLOCK5] 名前未入力')
+        return setInputErr('お名前を入力してください')
+      }
+      if (!String(phone).trim()) {
+        alert('[BLOCK6] 電話番号未入力')
+        return setInputErr('電話番号を入力してください')
+      }
+
+      alert('[SHOW] 全パス → 確認画面へ')
+      setInputErr('')
+      setScreen('confirm')
+    } catch (e) {
+      alert('[ERROR] 例外発生: ' + e.message)
     }
-    console.log('[goConfirm] PASS 1')
-
-    console.log('[goConfirm] CHECK 2: selGuest =', JSON.stringify(selGuest))
-    if (!selGuest) {
-      const msg = '人数を選択してください'
-      console.log('[goConfirm] BLOCKED at 2:', msg)
-      alert('[2] ' + msg)
-      return setInputErr(msg)
-    }
-    console.log('[goConfirm] PASS 2')
-
-    console.log('[goConfirm] CHECK 3: isKasshiki =', isKasshiki, 'selCount =', JSON.stringify(selCount))
-    if (isKasshiki && !selCount) {
-      const msg = '人数を選択してください（貸切）'
-      console.log('[goConfirm] BLOCKED at 3:', msg)
-      alert('[3] ' + msg)
-      return setInputErr(msg)
-    }
-    console.log('[goConfirm] PASS 3')
-
-    console.log('[goConfirm] CHECK 4: selTime =', JSON.stringify(selTime))
-    if (!selTime) {
-      const msg = '来店時間を選択してください'
-      console.log('[goConfirm] BLOCKED at 4:', msg)
-      alert('[4] ' + msg)
-      return setInputErr(msg)
-    }
-    console.log('[goConfirm] PASS 4')
-
-    console.log('[goConfirm] CHECK 5: name =', JSON.stringify(name.trim()))
-    if (!name.trim()) {
-      const msg = 'お名前を入力してください'
-      console.log('[goConfirm] BLOCKED at 5:', msg)
-      alert('[5] ' + msg)
-      return setInputErr(msg)
-    }
-    console.log('[goConfirm] PASS 5')
-
-    console.log('[goConfirm] CHECK 6: phone =', JSON.stringify(phone.trim()))
-    if (!phone.trim()) {
-      const msg = '電話番号を入力してください'
-      console.log('[goConfirm] BLOCKED at 6:', msg)
-      alert('[6] ' + msg)
-      return setInputErr(msg)
-    }
-    console.log('[goConfirm] PASS 6')
-
-    console.log('[goConfirm] ALL PASSED → setScreen(confirm)')
-    alert('[SHOW] 確認画面に遷移します → setScreen(confirm) を呼びます')
-    setInputErr('')
-    setScreen('confirm')
   }
 
   // ===== 予約送信 =====
