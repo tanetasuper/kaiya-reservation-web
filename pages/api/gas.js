@@ -1,21 +1,32 @@
-export default async function handler(req, res) {
+export const config = { runtime: 'edge' }
+
+const json = (data) =>
+  new Response(JSON.stringify(data), {
+    headers: { 'Content-Type': 'application/json' },
+  })
+
+export default async function handler(req) {
   const gasUrl = process.env.GAS_URL
-  if (!gasUrl) return res.json({ error: 'GAS_URL not set in environment' })
+  if (!gasUrl) return json({ error: 'GAS_URL not set in environment' })
 
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 25000)
+  const timer = setTimeout(() => controller.abort(), 28000)
 
   try {
     const params = new URLSearchParams()
+    const { searchParams } = new URL(req.url)
 
-    for (const [k, v] of Object.entries(req.query || {})) {
+    for (const [k, v] of searchParams.entries()) {
       params.set(k, v)
     }
 
-    if (req.method !== 'GET' && req.body) {
-      const body = req.body
-      if (body.action) params.set('action', body.action)
-      params.set('body', JSON.stringify(body))
+    if (req.method !== 'GET') {
+      let body = null
+      try { body = await req.json() } catch {}
+      if (body) {
+        if (body.action) params.set('action', body.action)
+        params.set('body', JSON.stringify(body))
+      }
     }
 
     const response = await fetch(`${gasUrl}?${params}`, { signal: controller.signal })
@@ -23,15 +34,12 @@ export default async function handler(req, res) {
     const text = await response.text()
 
     try {
-      res.json(JSON.parse(text))
+      return json(JSON.parse(text))
     } catch {
-      res.json({
-        error: 'GAS returned non-JSON',
-        preview: text.slice(0, 300),
-      })
+      return json({ error: 'GAS returned non-JSON', preview: text.slice(0, 300) })
     }
   } catch (err) {
     clearTimeout(timer)
-    res.json({ error: err.name === 'AbortError' ? 'GASタイムアウト (>25s)' : err.message })
+    return json({ error: err.name === 'AbortError' ? 'GASタイムアウト (>28s)' : err.message })
   }
 }
