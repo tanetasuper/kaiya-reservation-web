@@ -233,18 +233,18 @@ export default function Home() {
     try {
       await Promise.race([
         window.liff.init({ liffId: LIFF_ID }),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
       ])
       if (window.liff.isLoggedIn()) {
         const p = await window.liff.getProfile()
         setProfile(p)
-        try {
-          const cp = await api.getCustomerProfile(p.userId)
+        // リピーター情報はバックグラウンドで取得（画面遷移をブロックしない）
+        api.getCustomerProfile(p.userId).then((cp) => {
           if (cp.found) {
             if (cp.name) setName(cp.name)
             if (cp.phone) setPhone(cp.phone)
           }
-        } catch {}
+        }).catch(() => {})
       } else {
         window.liff.login({ redirectUri: location.href })
         return
@@ -277,39 +277,54 @@ export default function Home() {
 
   // ===== バリデーション =====
   function goConfirm() {
-    console.log('[goConfirm] date:', selDate, 'guest:', selGuest, 'count:', selCount, 'time:', selTime, 'name:', name.trim(), 'phone:', phone.trim())
+    console.log('[goConfirm] called — date:', selDate, 'guest:', selGuest, 'count:', selCount, 'time:', selTime, 'name:', name.trim(), 'phone:', phone.trim())
+    setInputErr('')
+
+    // VALIDATION 1: 来店日
     if (!selDate) {
       console.log('[goConfirm] BLOCKED: no date')
       return setInputErr('ご来店日を選択してください')
     }
+
+    // VALIDATION 2: 締め切り（holidays が空の場合はスキップ）
     const dl = getDeadline(selDate)
-    console.log('[goConfirm] deadline:', dl, 'now:', new Date(), 'passed:', new Date() > dl)
-    if (new Date() > dl) {
+    console.log('[goConfirm] deadline:', dl, '/ now:', new Date(), '/ passed:', dl ? new Date() > dl : 'no-deadline')
+    if (dl && new Date() > dl) {
       console.log('[goConfirm] BLOCKED: deadline passed')
       return setInputErr('選択された日付は予約受付期限を過ぎています')
     }
+
+    // VALIDATION 3: 人数
     if (!selGuest) {
       console.log('[goConfirm] BLOCKED: no guest')
       return setInputErr('人数を選択してください')
     }
+
+    // VALIDATION 4: 貸切人数
     if (isKasshiki && !selCount) {
       console.log('[goConfirm] BLOCKED: kasshiki no count')
       return setInputErr('人数を選択してください')
     }
+
+    // VALIDATION 5: 来店時間
     if (!selTime) {
       console.log('[goConfirm] BLOCKED: no time')
       return setInputErr('来店時間を選択してください')
     }
+
+    // VALIDATION 6: お名前
     if (!name.trim()) {
       console.log('[goConfirm] BLOCKED: no name')
       return setInputErr('お名前を入力してください')
     }
+
+    // VALIDATION 7: 電話番号
     if (!phone.trim()) {
       console.log('[goConfirm] BLOCKED: no phone')
       return setInputErr('電話番号を入力してください')
     }
+
     console.log('[goConfirm] ALL PASSED → screen: confirm')
-    setInputErr('')
     setScreen('confirm')
   }
 
@@ -377,6 +392,7 @@ export default function Home() {
 
   // ===== 変更フォーム =====
   function openChangeForm(res) {
+    console.log('[openChangeForm] date:', res?.date, 'time:', res?.time, 'endTime:', res?.endTime, 'raw res:', res)
     setChangingRes(res)
     setChgDate('')
     setChgTime('')
@@ -807,7 +823,7 @@ export default function Home() {
             <div className="card-lbl">📝　変更対象の予約</div>
             <div className="card-body">
               <div className="chg-current">
-                {fmtDate(changingRes?.date)}
+                {changingRes?.date}
                 <br />{changingRes?.time}〜{changingRes?.endTime}
                 <br />{changingRes?.guests}名様
               </div>
@@ -852,7 +868,7 @@ export default function Home() {
             <div className="cf-row">
               <div className="cf-lbl">変更前</div>
               <div className="cf-val" style={{ color: 'var(--sub)' }}>
-                {fmtDate(changingRes?.date)}<br />{changingRes?.time}〜{changingRes?.endTime}
+                {changingRes?.date}<br />{changingRes?.time}〜{changingRes?.endTime}
               </div>
             </div>
             <div className="cf-row">
