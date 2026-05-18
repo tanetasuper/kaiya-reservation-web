@@ -239,6 +239,7 @@ export default function Home() {
 
   // ===== LIFF初期化 =====
   const initLiff = useCallback(async () => {
+    let userId = null
     try {
       await Promise.race([
         window.liff.init({ liffId: LIFF_ID }),
@@ -247,6 +248,7 @@ export default function Home() {
       if (window.liff.isLoggedIn()) {
         const p = await window.liff.getProfile()
         setProfile(p)
+        userId = p.userId
         // リピーター情報はバックグラウンドで取得（画面遷移をブロックしない）
         api.getCustomerProfile(p.userId).then((cp) => {
           if (cp.found) {
@@ -260,9 +262,25 @@ export default function Home() {
       }
     } catch (e) {
       console.warn('LIFF:', e.message)
-      setProfile({ userId: 'guest_' + Date.now(), displayName: '' })
+      const guestId = 'guest_' + Date.now()
+      setProfile({ userId: guestId, displayName: '' })
+      userId = guestId
     }
-    setScreen('input')
+    // URLパラメータ ?screen=myres で予約確認画面に直接遷移
+    const goMyRes = new URLSearchParams(window.location.search).get('screen') === 'myres'
+    if (goMyRes && userId) {
+      setMyRes([])
+      setMyResLoading(true)
+      setCancelId(null)
+      setScreen('myres')
+      api.getMyReservations(userId).then(r => {
+        setMyRes(r.success ? r.list || [] : [])
+      }).catch(() => {
+        setMyRes([])
+      }).finally(() => setMyResLoading(false))
+    } else {
+      setScreen('input')
+    }
   }, [])
 
   useEffect(() => {
