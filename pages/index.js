@@ -250,8 +250,8 @@ export default function Home() {
         // リピーター情報はバックグラウンドで取得（画面遷移をブロックしない）
         api.getCustomerProfile(p.userId).then((cp) => {
           if (cp.found) {
-            if (cp.name) setName(cp.name)
-            if (cp.phone) setPhone(cp.phone)
+            if (cp.name) setName(String(cp.name))
+            if (cp.phone) setPhone(String(cp.phone))
           }
         }).catch(() => {})
       } else {
@@ -307,18 +307,18 @@ export default function Home() {
       const r = await api.createReservation({
         lineUserId: profile?.userId || 'unknown',
         displayName: profile?.displayName || '',
-        name: name.trim(),
-        phone: phone.trim(),
+        name: String(name).trim(),
+        phone: String(phone).trim(),
         date: dateStr,
         time: selTime,
         guests: effectiveGuests,
         course: '季節の貝焼きコース',
         isKasshiki: isKasshiki && !isKonsult,
         isKonsult,
-        notes: notes.trim(),
-        q1: q1.trim(),
-        q2: q2.trim(),
-        q3: q3.trim(),
+        notes: String(notes).trim(),
+        q1: String(q1).trim(),
+        q2: String(q2).trim(),
+        q3: String(q3).trim(),
       })
       if (r.success) {
         setDone({
@@ -330,9 +330,7 @@ export default function Home() {
         setCfErr(r.error || '予約に失敗しました')
       }
     } catch (e) {
-      const msg = e?.message || String(e)
-      alert('[DEBUG] 予約エラー: ' + msg)
-      setCfErr('通信エラー: ' + msg)
+      setCfErr('通信エラーが発生しました: ' + (e?.message || ''))
     }
     setSubmitting(false)
   }
