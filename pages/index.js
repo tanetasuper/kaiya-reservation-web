@@ -286,6 +286,7 @@ export default function Home() {
 
   // ===== バリデーション =====
   function goConfirm() {
+    alert('[START] goConfirm開始')
     console.log('[goConfirm] START', { selDate, selGuest, selCount, selTime, name: name.trim(), phone: phone.trim(), isKasshiki })
 
     console.log('[goConfirm] CHECK 1: selDate =', JSON.stringify(selDate))
