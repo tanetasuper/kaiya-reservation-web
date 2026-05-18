@@ -329,8 +329,10 @@ export default function Home() {
       } else {
         setCfErr(r.error || '予約に失敗しました')
       }
-    } catch {
-      setCfErr('通信エラーが発生しました')
+    } catch (e) {
+      const msg = e?.message || String(e)
+      alert('[DEBUG] 予約エラー: ' + msg)
+      setCfErr('通信エラー: ' + msg)
     }
     setSubmitting(false)
   }
