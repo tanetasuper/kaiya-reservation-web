@@ -812,8 +812,10 @@ export default function Home() {
                 {res.status === 'キャンセル' ? (
                   <div style={{ marginTop: 8, color: 'var(--red)', fontSize: 13, fontWeight: 'bold' }}>✕ キャンセル済み</div>
                 ) : !isChangeCancelable(res.date) ? (
-                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--hint)' }}>
-                    ※ 変更・キャンセルの受付期限が過ぎています（来店2日前22:00まで）
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--hint)', lineHeight: 1.7 }}>
+                    ※ 変更・キャンセルの受付期限が過ぎています。<br />
+                    直前の変更は基本承っておりませんが、まずはお電話ください。<br />
+                    📞 <a href="tel:08053800280" style={{ color: 'var(--green)', fontWeight: 'bold' }}>080-5380-0280</a>
                   </div>
                 ) : (
                   <>
@@ -850,7 +852,7 @@ export default function Home() {
             <div className="card-lbl">📝　変更対象の予約</div>
             <div className="card-body">
               <div className="chg-current">
-                {changingRes?.date}
+                {fmtDate(changingRes?.date)}
                 <br />{fmtTime(changingRes?.time)}〜{fmtTime(changingRes?.endTime)}
                 <br />{changingRes?.guests}名様
               </div>
@@ -895,7 +897,7 @@ export default function Home() {
             <div className="cf-row">
               <div className="cf-lbl">変更前</div>
               <div className="cf-val" style={{ color: 'var(--sub)' }}>
-                {changingRes?.date}<br />{fmtTime(changingRes?.time)}〜{fmtTime(changingRes?.endTime)}
+                {fmtDate(changingRes?.date)}<br />{fmtTime(changingRes?.time)}〜{fmtTime(changingRes?.endTime)}
               </div>
             </div>
             <div className="cf-row">
