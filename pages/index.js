@@ -286,43 +286,14 @@ export default function Home() {
 
   // ===== バリデーション =====
   function goConfirm() {
-    try {
-      alert('[START] goConfirm開始')
-
-      alert('[2] selDate=' + String(selDate) + ' / selGuest=' + String(selGuest) + ' / selTime=' + String(selTime))
-      alert('[3] name=' + String(name) + ' / phone=' + String(phone))
-
-      if (!selDate) {
-        alert('[BLOCK1] 日付未入力')
-        return setInputErr('ご来店日を選択してください')
-      }
-      if (!selGuest) {
-        alert('[BLOCK2] 人数未選択')
-        return setInputErr('人数を選択してください')
-      }
-      if (isKasshiki && !selCount) {
-        alert('[BLOCK3] 貸切人数未選択')
-        return setInputErr('人数を選択してください')
-      }
-      if (!selTime) {
-        alert('[BLOCK4] 時間未選択')
-        return setInputErr('来店時間を選択してください')
-      }
-      if (!String(name).trim()) {
-        alert('[BLOCK5] 名前未入力')
-        return setInputErr('お名前を入力してください')
-      }
-      if (!String(phone).trim()) {
-        alert('[BLOCK6] 電話番号未入力')
-        return setInputErr('電話番号を入力してください')
-      }
-
-      alert('[SHOW] 全パス → 確認画面へ')
-      setInputErr('')
-      setScreen('confirm')
-    } catch (e) {
-      alert('[ERROR] 例外発生: ' + e.message)
-    }
+    if (!selDate) return setInputErr('ご来店日を選択してください')
+    if (!selGuest) return setInputErr('人数を選択してください')
+    if (isKasshiki && !selCount) return setInputErr('人数を選択してください')
+    if (!selTime) return setInputErr('来店時間を選択してください')
+    if (!String(name).trim()) return setInputErr('お名前を入力してください')
+    if (!String(phone).trim()) return setInputErr('電話番号を入力してください')
+    setInputErr('')
+    setScreen('confirm')
   }
 
   // ===== 予約送信 =====
@@ -656,7 +627,7 @@ export default function Home() {
 
           {inputErr && <div className="err mt12">{inputErr}</div>}
           <div className="mt16">
-            <button className="btn-p" onClick={() => { alert('ボタン押された'); goConfirm(); }}>確認画面へ　→</button>
+            <button className="btn-p" onClick={goConfirm}>確認画面へ　→</button>
           </div>
           <div className="mt8">
             <button className="myres-link" onClick={openMyRes}>ご予約の確認・変更はこちら</button>
