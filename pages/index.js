@@ -34,6 +34,15 @@ function parseDate(s) {
   return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10))
 }
 
+// "HH:mm" はそのまま / "1899-12-30T08:30:00.000Z" のようなISO文字列 → getHours/getMinutes でHH:mm
+function fmtTime(t) {
+  if (!t) return ''
+  if (/^\d{1,2}:\d{2}$/.test(String(t))) return String(t)
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return String(t)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 // 予約可能な最も近い日を計算
 function computeDateMin(now, hols) {
   const h = hols || {}
@@ -277,6 +286,13 @@ export default function Home() {
 
   // ===== バリデーション =====
   function goConfirm() {
+    if (!selDate) return setInputErr('ご来店日を選択してください')
+    if (!selGuest) return setInputErr('人数を選択してください')
+    if (isKasshiki && !selCount) return setInputErr('人数を選択してください')
+    if (!selTime) return setInputErr('来店時間を選択してください')
+    if (!name.trim()) return setInputErr('お名前を入力してください')
+    if (!phone.trim()) return setInputErr('電話番号を入力してください')
+    setInputErr('')
     setScreen('confirm')
   }
 
@@ -344,7 +360,6 @@ export default function Home() {
 
   // ===== 変更フォーム =====
   function openChangeForm(res) {
-    alert('changingRes.date = ' + res?.date)
     setChangingRes(res)
     setChgDate('')
     setChgTime('')
@@ -689,9 +704,13 @@ export default function Home() {
             )}
           </div>
           <div className="policy">
-            ⚠️ キャンセルポリシー
-            <br />
-            {deadlineLabel(selDate) || 'ご予約日の2日前22:00までにご連絡ください。'}
+            ⚠️ キャンセルポリシー<br /><br />
+            当店は完全予約式での営業になります。<br />
+            キャンセル料（予約人数変更含め）がございます。<br /><br />
+            2日前22:00まで：0%<br />
+            前日22:00まで：50%<br />
+            当日以降：100%<br /><br />
+            直前の来店時間変更については対応できない可能性がございます。お電話にてご確認ください。
           </div>
           {cfErr && <div className="err mt12">{cfErr}</div>}
           <div className="mt16">
@@ -736,7 +755,7 @@ export default function Home() {
               <div key={res.id} className="res-card">
                 <div className="res-date">{fmtDate(res.date)}</div>
                 <div className="res-detail">
-                  ⏰ {res.time}〜{res.endTime}　👥 {res.guests}名様
+                  ⏰ {fmtTime(res.time)}〜{fmtTime(res.endTime)}　👥 {res.guests}名様
                   <br />🍽 {res.course}
                   {res.notes ? <><br />💬 {res.notes}</> : null}
                 </div>
@@ -776,7 +795,7 @@ export default function Home() {
             <div className="card-body">
               <div className="chg-current">
                 {changingRes?.date}
-                <br />{changingRes?.time}〜{changingRes?.endTime}
+                <br />{fmtTime(changingRes?.time)}〜{fmtTime(changingRes?.endTime)}
                 <br />{changingRes?.guests}名様
               </div>
             </div>
@@ -820,7 +839,7 @@ export default function Home() {
             <div className="cf-row">
               <div className="cf-lbl">変更前</div>
               <div className="cf-val" style={{ color: 'var(--sub)' }}>
-                {changingRes?.date}<br />{changingRes?.time}〜{changingRes?.endTime}
+                {changingRes?.date}<br />{fmtTime(changingRes?.time)}〜{fmtTime(changingRes?.endTime)}
               </div>
             </div>
             <div className="cf-row">

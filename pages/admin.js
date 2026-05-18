@@ -52,6 +52,44 @@ const iStyle = {
   fontSize: 14, background: '#fafafa', fontFamily: 'inherit',
 }
 
+function MiniCalendar({ year, month, blocked, onSelect }) {
+  const blockedSet = new Set((blocked || []).map(b => b.date))
+  const firstDay = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const todayD = new Date()
+  const todayYMD = `${todayD.getFullYear()}/${String(todayD.getMonth() + 1).padStart(2, '0')}/${String(todayD.getDate()).padStart(2, '0')}`
+  const DAY_NAMES = ['日', '月', '火', '水', '木', '金', '土']
+  const cells = []
+  for (let i = 0; i < firstDay; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ymd = `${year}/${String(month + 1).padStart(2, '0')}/${String(d).padStart(2, '0')}`
+    cells.push({ d, ymd, blocked: blockedSet.has(ymd), isToday: ymd === todayYMD })
+  }
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
+        {DAY_NAMES.map((dn, i) => (
+          <div key={dn} style={{ textAlign: 'center', fontSize: 11, fontWeight: 'bold', padding: '4px 0', color: i === 0 ? '#e53935' : i === 6 ? '#1565c0' : '#888' }}>{dn}</div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {cells.map((cell, i) =>
+          cell === null ? <div key={`e${i}`} /> : (
+            <button key={cell.ymd} onClick={() => onSelect(cell.ymd)} style={{
+              padding: '6px 2px', textAlign: 'center', fontSize: 12, cursor: 'pointer',
+              border: cell.isToday ? '2px solid #06c755' : '1px solid transparent',
+              borderRadius: 6,
+              background: cell.blocked ? '#ffebee' : 'transparent',
+              color: cell.blocked ? '#e53935' : i % 7 === 0 ? '#e53935' : i % 7 === 6 ? '#1565c0' : '#111',
+              fontWeight: cell.blocked ? 'bold' : 'normal',
+            }}>{cell.d}</button>
+          )
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Admin() {
   const pwRef = useRef('')
   const [authed, setAuthed] = useState(false)
@@ -87,6 +125,19 @@ export default function Admin() {
   const [newDate, setNewDate] = useState('')
   const [newReason, setNewReason] = useState('')
 
+  // Settings
+  const [settings, setSettings] = useState({ maxSeats: 8, courses: [{ name: '季節の貝焼きコース', price: 11000, description: '旬の貝と野菜をふんだんに使ったコースメニュー', duration: 150 }] })
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const [editCourseIdx, setEditCourseIdx] = useState(-1)
+  const [editCourse, setEditCourse] = useState({ name: '', price: 0, description: '', duration: 150 })
+  const [newCourse, setNewCourse] = useState({ name: '', price: '', description: '', duration: 150 })
+  const [showAddCourse, setShowAddCourse] = useState(false)
+
+  // Calendar navigation for blocked dates
+  const [calYear, setCalYear] = useState(new Date().getFullYear())
+  const [calMonth, setCalMonth] = useState(new Date().getMonth())
+
   function showToast(msg, type = 'ok') {
     setToast({ msg, type })
     setTimeout(() => setToast({ msg: '', type: 'ok' }), 3000)
@@ -113,6 +164,7 @@ export default function Admin() {
     if (authed) {
       loadList(pwRef.current)
       loadBlocked(pwRef.current)
+      loadSettings()
     }
   }, [authed])
 
@@ -245,6 +297,25 @@ export default function Admin() {
     } catch { showToast('通信エラー', 'error') }
   }
 
+  async function loadSettings() {
+    setSettingsLoading(true)
+    try {
+      const r = await api.getSettings()
+      if (r.success) setSettings({ maxSeats: r.maxSeats, courses: r.courses || [] })
+    } catch {}
+    setSettingsLoading(false)
+  }
+
+  async function doSaveSettings() {
+    setSettingsSaving(true)
+    try {
+      const r = await api.saveSettings(pwRef.current, settings)
+      if (r.success) showToast('設定を保存しました')
+      else showToast(r.error || '保存に失敗しました', 'error')
+    } catch { showToast('通信エラー', 'error') }
+    setSettingsSaving(false)
+  }
+
   if (!authed) {
     return (
       <>
@@ -289,7 +360,7 @@ export default function Admin() {
 
       {/* Tabs */}
       <div style={{ background: '#fff', borderBottom: '1px solid #e0e0e0', display: 'flex' }}>
-        {[['list', '予約一覧'], ['add', '新規登録'], ['block', '休業日設定']].map(([id, label]) => (
+        {[['list', '予約一覧'], ['add', '新規登録'], ['settings', '店舗設定'], ['block', '休業日設定']].map(([id, label]) => (
           <button
             key={id} onClick={() => setTab(id)}
             style={{
@@ -464,9 +535,151 @@ export default function Admin() {
           </div>
         )}
 
+        {/* ── SETTINGS ── */}
+        {tab === 'settings' && (
+          <div>
+            {settingsLoading ? (
+              <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>読み込み中...</div>
+            ) : (
+              <>
+                {/* 席数 */}
+                <div style={{ background: '#fff', borderRadius: 12, padding: 20, marginBottom: 12, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+                  <h2 style={{ fontSize: 15, fontWeight: 'bold', marginBottom: 16 }}>予約受付席数</h2>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <label style={{ fontSize: 13, color: '#666' }}>最大席数</label>
+                    <input
+                      type="number" min={1} max={12}
+                      value={settings.maxSeats}
+                      onChange={e => setSettings(s => ({ ...s, maxSeats: parseInt(e.target.value) || 8 }))}
+                      style={{ ...iStyle, width: 80 }}
+                    />
+                    <span style={{ fontSize: 12, color: '#aaa' }}>名（1〜12）</span>
+                  </div>
+                </div>
+
+                {/* コースメニュー */}
+                <div style={{ background: '#fff', borderRadius: 12, padding: 20, marginBottom: 12, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+                  <h2 style={{ fontSize: 15, fontWeight: 'bold', marginBottom: 16 }}>コースメニュー</h2>
+                  {settings.courses.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '16px 0', color: '#aaa', fontSize: 13 }}>コースが登録されていません</div>
+                  ) : (
+                    settings.courses.map((c, idx) => (
+                      <div key={idx} style={{ borderBottom: idx < settings.courses.length - 1 ? '1px solid #f0f0f0' : 'none', paddingBottom: 12, marginBottom: 12 }}>
+                        {editCourseIdx === idx ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <Field label="コース名">
+                              <input type="text" value={editCourse.name}
+                                onChange={e => setEditCourse(c => ({ ...c, name: e.target.value }))} style={iStyle} />
+                            </Field>
+                            <Field label="価格（税込・円）">
+                              <input type="number" value={editCourse.price}
+                                onChange={e => setEditCourse(c => ({ ...c, price: parseInt(e.target.value) || 0 }))} style={iStyle} />
+                            </Field>
+                            <Field label="説明文" span>
+                              <input type="text" value={editCourse.description}
+                                onChange={e => setEditCourse(c => ({ ...c, description: e.target.value }))} style={iStyle} />
+                            </Field>
+                            <Field label="所要時間（分）">
+                              <input type="number" value={editCourse.duration}
+                                onChange={e => setEditCourse(c => ({ ...c, duration: parseInt(e.target.value) || 0 }))} style={iStyle} />
+                            </Field>
+                            <div style={{ gridColumn: '1/-1', display: 'flex', gap: 8, marginTop: 4 }}>
+                              <button onClick={() => {
+                                const cs = [...settings.courses]; cs[idx] = { ...editCourse }
+                                setSettings(s => ({ ...s, courses: cs })); setEditCourseIdx(-1)
+                              }} style={{ padding: '8px 18px', background: '#06c755', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer' }}>保存</button>
+                              <button onClick={() => setEditCourseIdx(-1)}
+                                style={{ padding: '8px 18px', background: '#f0f0f0', color: '#666', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer' }}>キャンセル</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                            <div>
+                              <div style={{ fontSize: 14, fontWeight: 'bold' }}>{c.name}</div>
+                              <div style={{ fontSize: 13, color: '#06c755', marginTop: 2 }}>¥{Number(c.price).toLocaleString()}（税込）</div>
+                              {c.description && <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{c.description}</div>}
+                              <div style={{ fontSize: 12, color: '#aaa', marginTop: 2 }}>約{c.duration}分</div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                              <button onClick={() => { setEditCourse({ ...c }); setEditCourseIdx(idx) }}
+                                style={{ padding: '5px 12px', background: '#e3f2fd', color: '#1565c0', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>編集</button>
+                              <button onClick={() => setSettings(s => ({ ...s, courses: s.courses.filter((_, i) => i !== idx) }))}
+                                style={{ padding: '5px 12px', background: '#ffebee', color: '#c62828', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>削除</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                  {showAddCourse ? (
+                    <div style={{ marginTop: 12, padding: 14, background: '#f0fff4', border: '1px solid #b2ecc8', borderRadius: 8 }}>
+                      <h3 style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 10 }}>コースを追加</h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <Field label="コース名">
+                          <input type="text" value={newCourse.name} placeholder="例：季節の貝焼きコース"
+                            onChange={e => setNewCourse(c => ({ ...c, name: e.target.value }))} style={iStyle} />
+                        </Field>
+                        <Field label="価格（税込・円）">
+                          <input type="number" value={newCourse.price} placeholder="11000"
+                            onChange={e => setNewCourse(c => ({ ...c, price: e.target.value }))} style={iStyle} />
+                        </Field>
+                        <Field label="説明文" span>
+                          <input type="text" value={newCourse.description} placeholder="旬の貝と野菜をふんだんに使ったコースメニュー"
+                            onChange={e => setNewCourse(c => ({ ...c, description: e.target.value }))} style={iStyle} />
+                        </Field>
+                        <Field label="所要時間（分）">
+                          <input type="number" value={newCourse.duration} placeholder="150"
+                            onChange={e => setNewCourse(c => ({ ...c, duration: e.target.value }))} style={iStyle} />
+                        </Field>
+                        <div style={{ gridColumn: '1/-1', display: 'flex', gap: 8, marginTop: 4 }}>
+                          <button onClick={() => {
+                            if (!newCourse.name) return
+                            setSettings(s => ({ ...s, courses: [...s.courses, { name: newCourse.name, price: parseInt(newCourse.price) || 0, description: newCourse.description, duration: parseInt(newCourse.duration) || 150 }] }))
+                            setNewCourse({ name: '', price: '', description: '', duration: 150 })
+                            setShowAddCourse(false)
+                          }} style={{ padding: '8px 18px', background: '#06c755', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer' }}>追加する</button>
+                          <button onClick={() => setShowAddCourse(false)}
+                            style={{ padding: '8px 18px', background: '#f0f0f0', color: '#666', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer' }}>キャンセル</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowAddCourse(true)}
+                      style={{ marginTop: 12, width: '100%', padding: 12, background: '#f0fff4', color: '#06c755', border: '1.5px dashed #06c755', borderRadius: 8, fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+                      ＋ コースを追加
+                    </button>
+                  )}
+                </div>
+
+                <button disabled={settingsSaving} onClick={doSaveSettings}
+                  style={{ width: '100%', padding: 15, background: '#06c755', color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 'bold', cursor: 'pointer', opacity: settingsSaving ? 0.7 : 1 }}>
+                  {settingsSaving ? '保存中...' : '設定を保存する'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {/* ── BLOCKED DATES ── */}
         {tab === 'block' && (
           <>
+            {/* カレンダー */}
+            <div style={{ background: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <button onClick={() => { if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11) } else setCalMonth(m => m - 1) }}
+                  style={{ padding: '6px 16px', background: '#f0f0f0', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}>←</button>
+                <div style={{ fontWeight: 'bold', fontSize: 15 }}>{calYear}年{calMonth + 1}月</div>
+                <button onClick={() => { if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0) } else setCalMonth(m => m + 1) }}
+                  style={{ padding: '6px 16px', background: '#f0f0f0', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}>→</button>
+              </div>
+              <MiniCalendar year={calYear} month={calMonth} blocked={blocked}
+                onSelect={ymd => setNewDate(ymd.replace(/\//g, '-'))} />
+              <p style={{ fontSize: 11, color: '#aaa', marginTop: 8, textAlign: 'center' }}>
+                赤色＝休業日登録済み　日付をタップすると下の入力欄にセットされます
+              </p>
+            </div>
+
+            {/* 追加フォーム */}
             <div style={{ background: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
               <h2 style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 12 }}>休業日を追加</h2>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -487,6 +700,7 @@ export default function Admin() {
               </div>
             </div>
 
+            {/* 一覧 */}
             <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
               {blockLoading ? (
                 <div style={{ textAlign: 'center', padding: 30, color: '#aaa' }}>読み込み中...</div>
@@ -500,12 +714,8 @@ export default function Admin() {
                     borderBottom: i < blocked.length - 1 ? '1px solid #f0f0f0' : 'none',
                   }}>
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 'bold' }}>
-                        {b.date}　{fmtDate(b.date)}
-                      </div>
-                      {b.reason && (
-                        <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{b.reason}</div>
-                      )}
+                      <div style={{ fontSize: 14, fontWeight: 'bold' }}>{b.date}　{fmtDate(b.date)}</div>
+                      {b.reason && <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{b.reason}</div>}
                     </div>
                     <button onClick={() => removeBlocked(b.date)}
                       style={{ padding: '6px 14px', background: '#ffebee', color: '#c62828', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>
