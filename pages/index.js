@@ -678,7 +678,7 @@ export default function Home() {
 
           {inputErr && <div className="err mt12">{inputErr}</div>}
           <div className="mt16">
-            <button className="btn-p" onClick={goConfirm}>確認画面へ　→</button>
+            <button className="btn-p" onClick={() => { alert('ボタン押された'); goConfirm(); }}>確認画面へ　→</button>
           </div>
           <div className="mt8">
             <button className="myres-link" onClick={openMyRes}>ご予約の確認・変更はこちら</button>
