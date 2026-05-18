@@ -105,12 +105,13 @@ export default function Home() {
   const [inputErr, setInputErr] = useState('')
   const [cfErr, setCfErr] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [done, setDone] = useState({ detail: '', id: '' })
+  const [done, setDone] = useState({ detail: '', id: '', pending: false, error: '', backScreen: 'confirm', title: 'ご予約を承りました' })
 
   // 予約一覧
   const [myRes, setMyRes] = useState([])
   const [myResLoading, setMyResLoading] = useState(false)
   const [cancelId, setCancelId] = useState(null)
+  const [cancelingId, setCancelingId] = useState(null)
 
   // 変更フォーム
   const [changingRes, setChangingRes] = useState(null)
@@ -172,6 +173,15 @@ export default function Home() {
     if (isHol) return `※ 祝日のため${mo}/${da}（3日前）22:00まで受付`
     if (isSatSun) return `※ 土日のため${mo}/${da}（木曜）22:00まで受付`
     return `※ 来店日の2日前（${mo}/${da}）22:00まで受付`
+  }
+
+  // 変更・キャンセル可否：来店2日前22:00 JST まで（UTC基準で安全に計算）
+  function isChangeCancelable(dateStr) {
+    if (!dateStr) return false
+    const norm = String(dateStr).replace(/\//g, '-')
+    const reservAt22JST = new Date(norm + 'T13:00:00Z') // 22:00 JST = 13:00 UTC
+    const deadline = new Date(reservAt22JST.getTime() - 2 * 24 * 60 * 60 * 1000)
+    return new Date() <= deadline
   }
 
   // ===== 人数ボタンの状態 =====
@@ -321,6 +331,10 @@ export default function Home() {
     const d = parseDate(selDate)
     const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
     const isKonsult = selGuest === 'konsult'
+    const baseDetail = `${fmtDate(selDate)}　${selTime}〜${addMin(selTime, STAY_MIN)}\n${effectiveGuests}名様${isKasshiki ? '（貸切プラン）' : ''}`
+    // Optimistic UI：先に done 画面へ遷移し、API はバックグラウンドで送信
+    setDone({ detail: baseDetail, id: '', pending: true, error: '', backScreen: 'confirm', title: 'ご予約を承りました' })
+    setScreen('done')
     try {
       const r = await api.createReservation({
         lineUserId: profile?.userId || 'unknown',
@@ -339,16 +353,12 @@ export default function Home() {
         q3: String(q3).trim(),
       })
       if (r.success) {
-        setDone({
-          detail: `${fmtDate(selDate)}　${selTime}〜${addMin(selTime, STAY_MIN)}\n${effectiveGuests}名様${isKasshiki ? '（貸切プラン）' : ''}\n\nLINEに確認メッセージをお送りしました。`,
-          id: `予約番号：${r.reservationId}`,
-        })
-        setScreen('done')
+        setDone({ detail: baseDetail + '\n\nLINEに確認メッセージをお送りしました。', id: `予約番号：${r.reservationId}`, pending: false, error: '', backScreen: 'confirm', title: 'ご予約を承りました' })
       } else {
-        setCfErr(r.error || '予約に失敗しました')
+        setDone(prev => ({ ...prev, pending: false, error: r.error || '予約に失敗しました' }))
       }
     } catch (e) {
-      setCfErr('通信エラーが発生しました: ' + (e?.message || ''))
+      setDone(prev => ({ ...prev, pending: false, error: '通信エラーが発生しました: ' + (e?.message || '') }))
     }
     setSubmitting(false)
   }
@@ -369,11 +379,13 @@ export default function Home() {
   }
 
   async function execCancel(id) {
+    setCancelingId(id)
     try {
       const r = await api.cancelReservation({ reservationId: id, lineUserId: profile?.userId || '' })
       if (r.success) setMyRes((prev) => prev.map((x) => (x.id === id ? { ...x, status: 'キャンセル' } : x)))
     } catch {}
     setCancelId(null)
+    setCancelingId(null)
   }
 
   // ===== 変更フォーム =====
@@ -390,6 +402,10 @@ export default function Home() {
     setChgcfErr('')
     const d = parseDate(chgDate)
     const nd = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+    const baseDetail = `${fmtDate(chgDate)}　${chgTime}〜${addMin(chgTime, STAY_MIN)}`
+    // Optimistic UI：先に done 画面へ遷移し、API はバックグラウンドで送信
+    setDone({ detail: baseDetail, id: '', pending: true, error: '', backScreen: 'chgconfirm', title: '変更が完了しました' })
+    setScreen('done')
     try {
       const r = await api.changeReservation({
         reservationId: changingRes.id,
@@ -398,16 +414,12 @@ export default function Home() {
         newTime: chgTime,
       })
       if (r.success) {
-        setDone({
-          detail: `予約を変更しました。\n${fmtDate(chgDate)}　${chgTime}〜${addMin(chgTime, STAY_MIN)}\n\nLINEに変更確認メッセージをお送りしました。`,
-          id: `予約番号：${changingRes.id}`,
-        })
-        setScreen('done')
+        setDone({ detail: baseDetail + '\n\nLINEに変更確認メッセージをお送りしました。', id: `予約番号：${changingRes.id}`, pending: false, error: '', backScreen: 'chgconfirm', title: '変更が完了しました' })
       } else {
-        setChgcfErr(r.error || '変更に失敗しました')
+        setDone(prev => ({ ...prev, pending: false, error: r.error || '変更に失敗しました' }))
       }
     } catch {
-      setChgcfErr('通信エラーが発生しました')
+      setDone(prev => ({ ...prev, pending: false, error: '通信エラーが発生しました' }))
     }
     setChgSubmitting(false)
   }
@@ -746,10 +758,30 @@ export default function Home() {
       {screen === 'done' && (
         <div className="scr">
           <div className="done-card">
-            <div className="done-ck">✓</div>
-            <div className="done-ttl">ご予約を承りました</div>
-            <div className="done-sub" style={{ whiteSpace: 'pre-line' }}>{done.detail}</div>
-            <div className="done-id">{done.id}</div>
+            {done.pending ? (
+              <div className="ld-wrap" style={{ padding: '20px 0' }}>
+                <div className="dots">
+                  <div className="dot" /><div className="dot" /><div className="dot" />
+                </div>
+                <p className="ld-txt">送信中です...</p>
+              </div>
+            ) : done.error ? (
+              <>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
+                <div className="done-ttl" style={{ color: 'var(--red)' }}>エラーが発生しました</div>
+                <div className="done-sub">{done.error}</div>
+                <div className="mt16">
+                  <button className="btn-s" onClick={() => { setScreen(done.backScreen); setSubmitting(false); setChgSubmitting(false) }}>← 戻る</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="done-ck">✓</div>
+                <div className="done-ttl">{done.title}</div>
+                <div className="done-sub" style={{ whiteSpace: 'pre-line' }}>{done.detail}</div>
+                <div className="done-id">{done.id}</div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -779,6 +811,10 @@ export default function Home() {
                 </div>
                 {res.status === 'キャンセル' ? (
                   <div style={{ marginTop: 8, color: 'var(--red)', fontSize: 13, fontWeight: 'bold' }}>✕ キャンセル済み</div>
+                ) : !isChangeCancelable(res.date) ? (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--hint)' }}>
+                    ※ 変更・キャンセルの受付期限が過ぎています（来店2日前22:00まで）
+                  </div>
                 ) : (
                   <>
                     <div className="res-actions">
@@ -789,8 +825,10 @@ export default function Home() {
                       <div className="cnl-confirm">
                         <p className="cnl-msg">本当にキャンセルしますか？</p>
                         <div className="cnl-btns">
-                          <button className="cnl-yes" onClick={() => execCancel(res.id)}>はい</button>
-                          <button className="cnl-no" onClick={() => setCancelId(null)}>いいえ</button>
+                          <button className="cnl-yes" disabled={cancelingId === res.id} onClick={() => execCancel(res.id)}>
+                            {cancelingId === res.id ? '処理中...' : 'はい'}
+                          </button>
+                          <button className="cnl-no" disabled={!!cancelingId} onClick={() => setCancelId(null)}>いいえ</button>
                         </div>
                       </div>
                     )}
