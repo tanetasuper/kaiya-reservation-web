@@ -815,7 +815,7 @@ export default function Home() {
                   <div style={{ marginTop: 8, fontSize: 12, color: 'var(--hint)', lineHeight: 1.7 }}>
                     ※ 変更・キャンセルの受付期限が過ぎています。<br />
                     直前の変更は基本承っておりませんが、まずはお電話ください。<br />
-                    📞 <a href="tel:08053800280" style={{ color: 'var(--green)', fontWeight: 'bold' }}>080-5380-0280</a>
+                    📞 <a href="tel:08093911475" style={{ color: 'var(--green)', fontWeight: 'bold' }}>080-9391-1475</a>
                   </div>
                 ) : (
                   <>
