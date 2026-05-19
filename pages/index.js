@@ -117,6 +117,7 @@ export default function Home() {
   const [changingRes, setChangingRes] = useState(null)
   const [chgDate, setChgDate] = useState('')
   const [chgTime, setChgTime] = useState('')
+  const [chgMsg, setChgMsg] = useState('')
   const [chgErr, setChgErr] = useState('')
   const [chgcfErr, setChgcfErr] = useState('')
   const [chgSubmitting, setChgSubmitting] = useState(false)
@@ -344,7 +345,7 @@ export default function Home() {
         date: dateStr,
         time: selTime,
         guests: effectiveGuests,
-        course: '季節の貝焼きコース',
+        course: '季節の貝フルコース',
         isKasshiki: isKasshiki && !isKonsult,
         isKonsult,
         notes: String(notes).trim(),
@@ -393,6 +394,7 @@ export default function Home() {
     setChangingRes(res)
     setChgDate('')
     setChgTime('')
+    setChgMsg('')
     setChgErr('')
     setScreen('change')
   }
@@ -412,6 +414,7 @@ export default function Home() {
         lineUserId: profile?.userId || '',
         newDate: nd,
         newTime: chgTime,
+        message: chgMsg.trim(),
       })
       if (r.success) {
         setDone({ detail: baseDetail + '\n\nLINEに変更確認メッセージをお送りしました。', id: `予約番号：${changingRes.id}`, pending: false, error: '', backScreen: 'chgconfirm', title: '変更が完了しました' })
@@ -467,7 +470,7 @@ export default function Home() {
             <div className="card-lbl">🍽　コース</div>
             <div className="card-body">
               <div className="course-row">
-                <div className="course-nm">季節の貝焼きコース</div>
+                <div className="course-nm">季節の貝フルコース</div>
                 <div className="course-pr">¥11,000<small>（税込）</small></div>
               </div>
               <div className="course-dc">旬の貝と野菜をふんだんに使ったコースメニュー</div>
@@ -673,7 +676,7 @@ export default function Home() {
             <div className="cf-row">
               <div className="cf-lbl">コース</div>
               <div className="cf-val">
-                季節の貝焼きコース
+                季節の貝フルコース
                 <br />
                 <span style={{ fontSize: 12, fontWeight: 'normal', color: 'var(--sub)' }}>
                   ¥11,000（税込）/ お一人様　・　約2時間30分
@@ -852,9 +855,11 @@ export default function Home() {
             <div className="card-lbl">📝　変更対象の予約</div>
             <div className="card-body">
               <div className="chg-current">
-                {fmtDate(changingRes?.date)}
-                <br />{fmtTime(changingRes?.time)}〜{fmtTime(changingRes?.endTime)}
-                <br />{changingRes?.guests}名様
+                <div style={{ fontSize: 15, fontWeight: 'bold', marginBottom: 6 }}>{fmtDate(changingRes?.date)}</div>
+                <div>⏰ {fmtTime(changingRes?.time)}〜{fmtTime(changingRes?.endTime)}</div>
+                <div>👥 {changingRes?.guests}名様</div>
+                {changingRes?.course && <div style={{ marginTop: 4 }}>🍽 {changingRes.course}</div>}
+                {changingRes?.notes && <div style={{ marginTop: 4, color: '#888' }}>💬 {changingRes.notes}</div>}
               </div>
             </div>
           </div>
@@ -873,6 +878,13 @@ export default function Home() {
               </div>
             </div>
           )}
+          <div className="card">
+            <div className="card-lbl">💬　伝言・要望（任意）</div>
+            <div className="card-body">
+              <textarea rows={3} value={chgMsg} onChange={(e) => setChgMsg(e.target.value)}
+                placeholder="変更に際してのご要望や伝言があればご記入ください" />
+            </div>
+          </div>
           {chgErr && <div className="err mt12">{chgErr}</div>}
           <div className="mt16">
             <button className="btn-p" onClick={() => {
@@ -906,6 +918,12 @@ export default function Home() {
                 {fmtDate(chgDate)}　{chgTime}〜{addMin(chgTime, STAY_MIN)}
               </div>
             </div>
+            {chgMsg.trim() && (
+              <div className="cf-row">
+                <div className="cf-lbl">伝言</div>
+                <div className="cf-val">{chgMsg.trim()}</div>
+              </div>
+            )}
           </div>
           <div className="policy">
             ⚠️ {deadlineLabel(chgDate) || '変更後の予約日が受付期限を過ぎている場合はキャンセル料が発生することがあります。'}
@@ -972,11 +990,11 @@ export default function Home() {
         .g-btn.sel .g-btn-sub { color: rgba(255,255,255,0.8); }
         .g-btn.dis { opacity: 0.5; cursor: not-allowed; pointer-events: none; background: #f5f5f5; }
         .g-btn-k {
-          width: 100%; margin-top: 8px; padding: 14px; border: 1.5px solid var(--green); border-radius: 8px;
-          background: #f0fff4; font-size: 13px; font-weight: bold; color: var(--green);
+          width: 100%; margin-top: 8px; padding: 14px; border: 1.5px solid var(--border); border-radius: 8px;
+          background: var(--white); font-size: 13px; font-weight: bold; color: var(--sub);
           cursor: pointer; text-align: center; transition: all 0.15s;
         }
-        .g-btn-k.sel { background: var(--green); color: #fff; }
+        .g-btn-k.sel { background: var(--green); border-color: var(--green); color: #fff; }
         .g-btn-k.dis { opacity: 0.5; cursor: not-allowed; pointer-events: none; background: #f5f5f5; border-color: #ccc; color: #999; }
         .g-btn-k.konsult { border-color: #888; background: #f8f8f8; color: #444; }
         .g-btn-k.konsult.sel { background: #555; border-color: #555; color: #fff; }

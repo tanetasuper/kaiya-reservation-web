@@ -212,7 +212,7 @@ function AddModal({ initialDate, pwRef, onClose, onAdded, showToast }) {
   const [data, setData] = useState({
     date: initialDate ? initialDate.replace(/\//g,'-') : '',
     time:'', name:'', phone:'', guests:'2',
-    course:'季節の貝焼きコース', notes:'', source:'電話',
+    course:'季節の貝フルコース', notes:'', source:'電話',
     lineUserId:'', isKasshiki:false, forceAdd:false,
   })
   const [err, setErr]     = useState('')
@@ -314,7 +314,7 @@ export default function Admin() {
   const [resLoading,    setResLoading]    = useState(false)
   const [selectedDate,  setSelectedDate]  = useState(null)
   const [editRes,       setEditRes]       = useState(null)
-  const [delId,         setDelId]         = useState(null)
+  const [cancelingResId, setCancelingResId] = useState(null)
   const [showAddModal,  setShowAddModal]  = useState(false)
   const [addInitDate,   setAddInitDate]   = useState(null)
   const [showSeatForm,  setShowSeatForm]  = useState(false)
@@ -430,12 +430,14 @@ export default function Admin() {
   }
 
   // ── Reservation actions ──────────────────────────────────────────
-  async function deleteRes(id) {
+  async function cancelRes(id) {
+    setCancelingResId(id)
     try {
-      const r = await api.adminDeleteReservation(pwRef.current, id)
-      if (r.success) { showToast('削除しました'); setDelId(null); loadReservations() }
-      else showToast(r.error||'削除に失敗しました','error')
+      const r = await api.adminUpdateReservation(pwRef.current, { id, status: 'キャンセル' })
+      if (r.success) { showToast('キャンセルしました'); loadReservations() }
+      else showToast(r.error||'キャンセルに失敗しました','error')
     } catch { showToast('通信エラー','error') }
+    setCancelingResId(null)
   }
 
   // ── Seat block for selected day ──────────────────────────────────
@@ -724,15 +726,12 @@ export default function Admin() {
                               {r.status}
                             </span>
                             <button onClick={() => setEditRes(r)} style={btnBlue}>編集</button>
-                            {delId===r.id ? (
-                              <>
-                                <button onClick={() => deleteRes(r.id)}
-                                  style={{ ...btnRed, background:'#e53935', color:'#fff' }}>確認</button>
-                                <button onClick={() => setDelId(null)} style={btnGray}>取消</button>
-                              </>
-                            ) : (
-                              <button onClick={() => setDelId(r.id)} style={btnRed}>削除</button>
-                            )}
+                            <button
+                              disabled={cancelingResId===r.id}
+                              onClick={() => cancelRes(r.id)}
+                              style={{ ...btnRed, opacity: cancelingResId===r.id ? 0.6 : 1 }}>
+                              {cancelingResId===r.id ? '処理中...' : 'キャンセル'}
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1071,7 +1070,7 @@ export default function Admin() {
                     <div style={{ marginTop:12, padding:14, background:'#f0fff4', border:'1px solid #b2ecc8', borderRadius:8 }}>
                       <h3 style={{ fontSize:13, fontWeight:'bold', marginBottom:10 }}>コースを追加</h3>
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-                        <Field label="コース名"><input type="text" value={newCourse.name} placeholder="例：季節の貝焼きコース" style={iStyle} onChange={e=>setNewCourse(c=>({...c,name:e.target.value}))} /></Field>
+                        <Field label="コース名"><input type="text" value={newCourse.name} placeholder="例：季節の貝フルコース" style={iStyle} onChange={e=>setNewCourse(c=>({...c,name:e.target.value}))} /></Field>
                         <Field label="価格（税込・円）"><input type="number" value={newCourse.price} placeholder="11000" style={iStyle} onChange={e=>setNewCourse(c=>({...c,price:e.target.value}))} /></Field>
                         <Field label="説明文" span><input type="text" value={newCourse.description} placeholder="旬の貝と野菜をふんだんに使ったコースメニュー" style={iStyle} onChange={e=>setNewCourse(c=>({...c,description:e.target.value}))} /></Field>
                         <Field label="所要時間（分）"><input type="number" value={newCourse.duration} placeholder="150" style={iStyle} onChange={e=>setNewCourse(c=>({...c,duration:e.target.value}))} /></Field>
