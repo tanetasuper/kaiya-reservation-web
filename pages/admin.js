@@ -336,11 +336,8 @@ export default function Admin() {
   // ── Notifications tab ────
   const [notifs,       setNotifs]       = useState([])
   const [notifLoading, setNotifLoading] = useState(false)
-  const [expandedN,    setExpandedN]    = useState(null)
-  const [markingId,    setMarkingId]    = useState(null)
-
   // ── Settings tab ────
-  const [settings,       setSettings]       = useState({ maxSeats:8, courses:[], receptionStopTime:'21:00' })
+  const [settings,       setSettings]       = useState({ maxSeats:8, courses:[], receptionStartTime:'17:00', receptionStopTime:'21:00' })
   const [settingsLoading,setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving]  = useState(false)
   const [editCourseIdx,  setEditCourseIdx]   = useState(-1)
@@ -424,7 +421,7 @@ export default function Admin() {
     setSettingsLoading(true)
     try {
       const r = await api.getSettings()
-      if (r.success) setSettings({ maxSeats: r.maxSeats||8, courses: r.courses||[], receptionStopTime: r.receptionStopTime||'21:00' })
+      if (r.success) setSettings({ maxSeats: r.maxSeats||8, courses: r.courses||[], receptionStartTime: r.receptionStartTime||'17:00', receptionStopTime: r.receptionStopTime||'21:00' })
     } catch {}
     setSettingsLoading(false)
   }
@@ -436,6 +433,16 @@ export default function Admin() {
       const r = await api.adminUpdateReservation(pwRef.current, { id, status: 'キャンセル' })
       if (r.success) { showToast('キャンセルしました'); loadReservations() }
       else showToast(r.error||'キャンセルに失敗しました','error')
+    } catch { showToast('通信エラー','error') }
+    setCancelingResId(null)
+  }
+
+  async function deleteRes(id) {
+    setCancelingResId(id)
+    try {
+      const r = await api.adminDeleteReservation(pwRef.current, id)
+      if (r.success) { showToast('削除しました'); loadReservations() }
+      else showToast(r.error||'削除に失敗しました','error')
     } catch { showToast('通信エラー','error') }
     setCancelingResId(null)
   }
@@ -501,16 +508,11 @@ export default function Admin() {
 
   // ── Notification actions ─────────────────────────────────────────
   async function markRead(id) {
-    setMarkingId(id)
+    setNotifs(ns => ns.filter(n => n.id !== id))
     try {
       const r = await api.adminMarkNotificationRead(pwRef.current, id)
-      if (r.success) {
-        setNotifs(ns => ns.filter(n => n.id !== id))
-        if (expandedN === id) setExpandedN(null)
-        showToast('確認済みにしました')
-      } else showToast(r.error||'エラー','error')
-    } catch { showToast('通信エラー','error') }
-    setMarkingId(null)
+      if (!r.success) { showToast(r.error||'エラー','error'); loadNotifications() }
+    } catch { showToast('通信エラー','error'); loadNotifications() }
   }
 
   // ── Settings ─────────────────────────────────────────────────────
@@ -570,7 +572,7 @@ export default function Admin() {
 
   const dayRes = useMemo(() =>
     reservations
-      .filter(r => r.date === selectedDate)
+      .filter(r => r.date === selectedDate && r.status === '確定')
       .sort((a,b) => (formatTime(a.time) < formatTime(b.time) ? -1 : 1)),
     [reservations, selectedDate]
   )
@@ -623,7 +625,7 @@ export default function Admin() {
 
       {/* Tabs */}
       <div style={{ background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex', position:'sticky', top:48, zIndex:9 }}>
-        {[['reservations','予約一覧'], ['block','ブロック'], ['notifications','通知'], ['settings','その他']].map(([id,label]) => (
+        {[['reservations','予約一覧'], ['notifications','通知'], ['settings','設定']].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{
               flex:1, padding:'13px 4px', border:'none', background:'transparent',
@@ -728,9 +730,9 @@ export default function Admin() {
                             <button onClick={() => setEditRes(r)} style={btnBlue}>編集</button>
                             <button
                               disabled={cancelingResId===r.id}
-                              onClick={() => cancelRes(r.id)}
+                              onClick={() => deleteRes(r.id)}
                               style={{ ...btnRed, opacity: cancelingResId===r.id ? 0.6 : 1 }}>
-                              {cancelingResId===r.id ? '処理中...' : 'キャンセル'}
+                              {cancelingResId===r.id ? '処理中...' : '削除'}
                             </button>
                           </div>
                         </div>
@@ -797,118 +799,49 @@ export default function Admin() {
             )}
 
             {!selectedDate && !resLoading && (
-              <div style={{ textAlign:'center', padding:'24px 0', color:'#bbb', fontSize:13 }}>
+              <div style={{ textAlign:'center', padding:'16px 0', color:'#bbb', fontSize:13 }}>
                 日付をタップすると予約一覧が表示されます
               </div>
             )}
-          </>
-        )}
 
-        {/* ─── TAB: ブロック ──────────────────────────────────────── */}
-        {tab==='block' && (
-          <>
-            {/* Calendar */}
-            <div style={{ background:'#fff', borderRadius:12, padding:16, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
-              <CalNav year={blockCalYear} month={blockCalMonth}
-                onPrev={() => prevMonth(blockCalYear,blockCalMonth,setBlockCalYear,setBlockCalMonth)}
-                onNext={() => nextMonth(blockCalYear,blockCalMonth,setBlockCalYear,setBlockCalMonth)} />
-              <AdminCalendar year={blockCalYear} month={blockCalMonth} dayData={blockCalData}
-                selected={null} onSelect={ymd => {
-                  setNewSeatDate(ymd.replace(/\//g,'-'))
-                  setNewClosedDate(ymd.replace(/\//g,'-'))
-                }} />
-              <p style={{ fontSize:11, color:'#aaa', marginTop:8, textAlign:'center' }}>
-                日付をタップすると下の入力欄にセットされます
-              </p>
-            </div>
-
-            {/* 予約停止枠 section */}
-            <div style={{ background:'#fff', borderRadius:12, padding:16, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
-              <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14, color:'#e65100' }}>予約停止枠</h2>
-              <div style={{ fontSize:12, color:'#888', marginBottom:12 }}>特定の日の受付席数を制限します（部分的な予約停止）</div>
-
-              {/* Add seat block */}
-              <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end', marginBottom:14, padding:12, background:'#fff8f0', borderRadius:8, border:'1px solid #ffe0b2' }}>
-                <Field label="日付 *">
-                  <input type="date" value={newSeatDate} onChange={e=>setNewSeatDate(e.target.value)}
-                    style={{ ...iStyle, width:'auto' }} />
-                </Field>
-                <Field label="停止席数 *">
-                  <input type="number" min={1} max={8} value={newSeatSeats}
-                    onChange={e=>setNewSeatSeats(parseInt(e.target.value)||1)}
-                    style={{ ...iStyle, width:80 }} />
-                </Field>
-                <Field label="理由（任意）">
-                  <input type="text" value={newSeatRsn} placeholder="個室使用・VIPなど"
-                    onChange={e=>setNewSeatRsn(e.target.value)}
-                    style={{ ...iStyle, minWidth:160 }} />
-                </Field>
-                <button onClick={addSeatBlock}
-                  style={{ ...btnGreen, alignSelf:'flex-end' }}>追加</button>
-              </div>
-
-              {/* List */}
-              {seatBlocks.length === 0 ? (
-                <div style={{ textAlign:'center', padding:'14px 0', color:'#bbb', fontSize:13 }}>予約停止枠の設定はありません</div>
-              ) : (
-                seatBlocks.map((sb,i) => (
-                  <div key={sb.date} style={{
-                    display:'flex', justifyContent:'space-between', alignItems:'center',
-                    padding:'12px 14px',
-                    borderBottom: i<seatBlocks.length-1 ? '1px solid #f0f0f0' : 'none',
-                  }}>
-                    <div>
-                      <div style={{ fontSize:14, fontWeight:'bold' }}>
-                        {fmtDate(sb.date)}
-                        <span style={{ marginLeft:10, color:'#e65100' }}>{sb.blockedSeats}席停止</span>
-                      </div>
-                      {sb.reason && <div style={{ fontSize:12, color:'#888', marginTop:2 }}>{sb.reason}</div>}
+            {/* 制限設定 */}
+            <div style={{ background:'#fff', borderRadius:12, padding:16, marginTop:4, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+              <h2 style={{ fontSize:14, fontWeight:'bold', marginBottom:12, color:'#555' }}>制限設定</h2>
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:12, fontWeight:'bold', color:'#c62828', marginBottom:6 }}>休業日</div>
+                {blocked.length === 0
+                  ? <div style={{ fontSize:12, color:'#bbb', marginBottom:8 }}>設定なし</div>
+                  : blocked.map((b,i) => (
+                    <div key={b.date} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom: i<blocked.length-1?'1px solid #f5f5f5':'none', marginBottom: i===blocked.length-1?8:0 }}>
+                      <span style={{ fontSize:13 }}>{fmtDate(b.date)}{b.reason && <span style={{ color:'#aaa', fontSize:12 }}>　{b.reason}</span>}</span>
+                      <button onClick={() => removeClosedDay(b.date)} style={{ ...btnRed, padding:'3px 10px', fontSize:11 }}>解除</button>
                     </div>
-                    <button onClick={() => removeSeatBlock(sb.date)} style={btnRed}>削除</button>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* 休業日 section */}
-            <div style={{ background:'#fff', borderRadius:12, padding:16, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
-              <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14, color:'#c62828' }}>休業日</h2>
-              <div style={{ fontSize:12, color:'#888', marginBottom:12 }}>この日は全ての予約受付を停止します</div>
-
-              {/* Add */}
-              <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end', marginBottom:14, padding:12, background:'#fff8f8', borderRadius:8, border:'1px solid #ffcccc' }}>
-                <Field label="日付 *">
-                  <input type="date" value={newClosedDate} onChange={e=>setNewClosedDate(e.target.value)}
-                    style={{ ...iStyle, width:'auto' }} />
-                </Field>
-                <Field label="理由（任意）">
-                  <input type="text" value={newClosedRsn} placeholder="定休日・貸切など"
-                    onChange={e=>setNewClosedRsn(e.target.value)}
-                    style={{ ...iStyle, minWidth:180 }} />
-                </Field>
-                <button onClick={addClosedDay}
-                  style={{ ...btnGreen, background:'#e53935', alignSelf:'flex-end' }}>追加</button>
+                  ))
+                }
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+                  <input type="date" value={newClosedDate} onChange={e=>setNewClosedDate(e.target.value)} style={{ ...iStyle, width:'auto', padding:'7px 10px', fontSize:13 }} />
+                  <input type="text" value={newClosedRsn} placeholder="理由（任意）" onChange={e=>setNewClosedRsn(e.target.value)} style={{ ...iStyle, flex:1, minWidth:100, padding:'7px 10px', fontSize:13 }} />
+                  <button onClick={addClosedDay} style={{ ...btnRed, background:'#e53935' }}>追加</button>
+                </div>
               </div>
-
-              {blockLoading ? (
-                <div style={{ textAlign:'center', padding:'14px 0', color:'#aaa', fontSize:13 }}>読み込み中...</div>
-              ) : blocked.length === 0 ? (
-                <div style={{ textAlign:'center', padding:'14px 0', color:'#bbb', fontSize:13 }}>休業日の設定はありません</div>
-              ) : (
-                blocked.map((b,i) => (
-                  <div key={b.date} style={{
-                    display:'flex', justifyContent:'space-between', alignItems:'center',
-                    padding:'12px 14px',
-                    borderBottom: i<blocked.length-1 ? '1px solid #f0f0f0' : 'none',
-                  }}>
-                    <div>
-                      <div style={{ fontSize:14, fontWeight:'bold' }}>{fmtDate(b.date)}</div>
-                      {b.reason && <div style={{ fontSize:12, color:'#888', marginTop:2 }}>{b.reason}</div>}
+              <div>
+                <div style={{ fontSize:12, fontWeight:'bold', color:'#e65100', marginBottom:6 }}>受付停止枠</div>
+                {seatBlocks.length === 0
+                  ? <div style={{ fontSize:12, color:'#bbb', marginBottom:8 }}>設定なし</div>
+                  : seatBlocks.map((sb,i) => (
+                    <div key={sb.date} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom: i<seatBlocks.length-1?'1px solid #f5f5f5':'none', marginBottom: i===seatBlocks.length-1?8:0 }}>
+                      <span style={{ fontSize:13 }}>{fmtDate(sb.date)} <span style={{ color:'#e65100', fontWeight:'bold' }}>{sb.blockedSeats}席停止</span>{sb.reason && <span style={{ color:'#aaa', fontSize:12 }}>　{sb.reason}</span>}</span>
+                      <button onClick={() => removeSeatBlock(sb.date)} style={{ ...btnRed, padding:'3px 10px', fontSize:11 }}>解除</button>
                     </div>
-                    <button onClick={() => removeClosedDay(b.date)} style={btnRed}>削除</button>
-                  </div>
-                ))
-              )}
+                  ))
+                }
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+                  <input type="date" value={newSeatDate} onChange={e=>setNewSeatDate(e.target.value)} style={{ ...iStyle, width:'auto', padding:'7px 10px', fontSize:13 }} />
+                  <input type="number" min={1} max={8} value={newSeatSeats} onChange={e=>setNewSeatSeats(parseInt(e.target.value)||1)} style={{ ...iStyle, width:60, padding:'7px 8px', fontSize:13 }} />
+                  <input type="text" value={newSeatRsn} placeholder="理由（任意）" onChange={e=>setNewSeatRsn(e.target.value)} style={{ ...iStyle, flex:1, minWidth:80, padding:'7px 10px', fontSize:13 }} />
+                  <button onClick={addSeatBlock} style={btnGreen}>追加</button>
+                </div>
+              </div>
             </div>
           </>
         )}
@@ -930,69 +863,29 @@ export default function Admin() {
             ) : (
               notifs.map(n => {
                 const lbl = notifLabel(n.type)
-                const expanded = expandedN === n.id
                 return (
-                  <div key={n.id} style={{ background:'#fff', borderRadius:12, marginBottom:8, boxShadow:'0 1px 3px rgba(0,0,0,.08)', overflow:'hidden' }}>
-                    <div style={{ padding:'14px 16px' }}>
-                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                            <span style={{ background:lbl.bg, color:lbl.color, padding:'2px 10px', borderRadius:12, fontSize:12, fontWeight:'bold', whiteSpace:'nowrap' }}>
-                              {lbl.text}
-                            </span>
-                            <span style={{ fontSize:12, color:'#aaa' }}>{n.datetime}</span>
-                          </div>
-                          <div style={{ fontSize:14, fontWeight:'bold' }}>
-                            {n.name} 様
-                            {n.date && <span style={{ marginLeft:8, fontSize:13, fontWeight:'normal', color:'#444' }}>{fmtDate(n.date)}</span>}
-                            {n.time && <span style={{ marginLeft:6, fontSize:13, color:'#444' }}>{formatTime(n.time)}〜</span>}
-                            {n.guests && <span style={{ marginLeft:6, fontSize:13, color:'#444' }}>{n.guests}名</span>}
-                          </div>
-                          {n.type==='change' && n.oldDate && (
-                            <div style={{ fontSize:12, color:'#888', marginTop:4 }}>
-                              変更前: {fmtDate(n.oldDate)} {formatTime(n.oldTime)}〜
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ display:'flex', gap:6, flexShrink:0, alignItems:'center' }}>
-                          <button
-                            onClick={() => setExpandedN(expanded ? null : n.id)}
-                            style={{ ...btnBlue, fontSize:11, padding:'4px 10px' }}>
-                            {expanded ? '閉じる▲' : '詳細▼'}
-                          </button>
-                          <button
-                            disabled={markingId===n.id}
-                            onClick={() => markRead(n.id)}
-                            style={{ ...btnGray, fontSize:12, background:'#e8f5e9', color:'#2e7d32' }}>
-                            {markingId===n.id ? '処理中...' : '確認済'}
-                          </button>
-                        </div>
+                  <div key={n.id} style={{ background:'#fff', borderRadius:12, marginBottom:8, boxShadow:'0 1px 3px rgba(0,0,0,.08)', padding:'14px 16px', display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5, flexWrap:'wrap' }}>
+                        <span style={{ background:lbl.bg, color:lbl.color, padding:'2px 10px', borderRadius:12, fontSize:12, fontWeight:'bold', whiteSpace:'nowrap' }}>{lbl.text}</span>
+                        <span style={{ fontSize:14, fontWeight:'bold' }}>{n.name} 様</span>
+                        <span style={{ fontSize:12, color:'#aaa' }}>{n.datetime}</span>
                       </div>
+                      <div style={{ fontSize:13, color:'#444', marginBottom:2 }}>
+                        {n.date && fmtDate(n.date)}
+                        {n.time && <span style={{ marginLeft:8 }}>{formatTime(n.time)}〜{formatTime(n.endTime)}</span>}
+                        {n.guests && <span style={{ marginLeft:8 }}>{n.guests}名</span>}
+                        {n.phone && <span style={{ marginLeft:8, color:'#888' }}>{n.phone}</span>}
+                      </div>
+                      {n.type==='change' && n.oldDate && (
+                        <div style={{ fontSize:12, color:'#888' }}>変更前: {fmtDate(n.oldDate)} {formatTime(n.oldTime)}〜</div>
+                      )}
+                      {n.notes && <div style={{ fontSize:12, color:'#888' }}>メモ: {n.notes}</div>}
                     </div>
-
-                    {expanded && (
-                      <div style={{ padding:'0 16px 14px', background:'#fafafa', borderTop:'1px solid #f0f0f0' }}>
-                        <table style={{ fontSize:12, color:'#555', borderCollapse:'collapse', marginTop:10 }}>
-                          <tbody>
-                            {[
-                              ['名前', n.name],
-                              ['来店日', fmtDate(n.date)],
-                              ['時間', n.time ? formatTime(n.time)+'〜'+formatTime(n.endTime) : '-'],
-                              ['人数', n.guests ? n.guests+'名' : '-'],
-                              ['電話', n.phone || '-'],
-                              n.type==='change' && ['変更前来店日', fmtDate(n.oldDate)],
-                              n.type==='change' && ['変更前時間', n.oldTime ? formatTime(n.oldTime)+'〜' : '-'],
-                              ['メモ', n.notes || '-'],
-                            ].filter(Boolean).map(([k,v]) => (
-                              <tr key={k}>
-                                <td style={{ paddingRight:16, paddingBottom:4, color:'#aaa', whiteSpace:'nowrap' }}>{k}</td>
-                                <td style={{ paddingBottom:4 }}>{v}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                    <button onClick={() => markRead(n.id)}
+                      style={{ ...btnGray, fontSize:13, background:'#e8f5e9', color:'#2e7d32', flexShrink:0, alignSelf:'center', padding:'10px 16px' }}>
+                      確認
+                    </button>
                   </div>
                 )
               })
@@ -1017,6 +910,12 @@ export default function Admin() {
                         onChange={e => setSettings(s=>({...s, maxSeats:parseInt(e.target.value)||8}))}
                         style={{ ...iStyle, width:80 }} />
                       <span style={{ fontSize:12, color:'#aaa' }}>名</span>
+                    </div>
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      <label style={{ fontSize:13, color:'#555', whiteSpace:'nowrap' }}>受付開始時間</label>
+                      <input type="time" value={settings.receptionStartTime}
+                        onChange={e => setSettings(s=>({...s, receptionStartTime:e.target.value}))}
+                        style={{ ...iStyle, width:120 }} />
                     </div>
                     <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                       <label style={{ fontSize:13, color:'#555', whiteSpace:'nowrap' }}>受付停止時間</label>
