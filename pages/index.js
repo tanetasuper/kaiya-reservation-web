@@ -91,6 +91,10 @@ export default function Home() {
   const [avail, setAvail] = useState(null)
   const [availLoading, setAvailLoading] = useState(false)
 
+  // コース設定（管理画面から取得）
+  const [settingsCourses, setSettingsCourses] = useState([{ name:'季節の貝フルコース', price:11000, description:'旬の貝と野菜をふんだんに使ったコースメニュー', duration:150 }])
+  const [selCourse, setSelCourse] = useState(0)
+
   // 予約フォーム
   const [selDate, setSelDate] = useState('')
   const [selGuest, setSelGuest] = useState('')
@@ -300,6 +304,13 @@ export default function Home() {
     const mx = new Date(now)
     mx.setFullYear(mx.getFullYear() + 1)
     setDateMax(toYMD(mx))
+    // コース設定を取得
+    api.getSettings().then(r => {
+      if (r.success && r.courses && r.courses.length > 0) {
+        setSettingsCourses(r.courses)
+        setSelCourse(0)
+      }
+    }).catch(() => {})
   }, [])
 
   // 祝日データが読み込まれたら dateMin を再計算
@@ -321,6 +332,14 @@ export default function Home() {
     if (!selTime) return setInputErr('来店時間を選択してください')
     if (!String(name).trim()) return setInputErr('お名前を入力してください')
     if (!String(phone).trim()) return setInputErr('電話番号を入力してください')
+    // 残席チェック
+    if (avail && !isKasshiki) {
+      const n = parseInt(selGuest) || 0
+      if (n >= 2 && n > avail.remainingSeats)
+        return setInputErr(`残席${avail.remainingSeats}名のため、${n}名様のご予約はお受けできません`)
+      if (n === 1 && !avail.canBook1)
+        return setInputErr('1名様のご予約はこの日はお受けできません')
+    }
     setInputErr('')
     setScreen('confirm')
   }
@@ -345,7 +364,7 @@ export default function Home() {
         date: dateStr,
         time: selTime,
         guests: effectiveGuests,
-        course: '季節の貝フルコース',
+        course: settingsCourses[selCourse]?.name || '季節の貝フルコース',
         isKasshiki: isKasshiki && !isKonsult,
         isKonsult,
         notes: String(notes).trim(),
@@ -469,14 +488,21 @@ export default function Home() {
           <div className="card">
             <div className="card-lbl">🍽　コース</div>
             <div className="card-body">
-              <div className="course-row">
-                <div className="course-nm">季節の貝フルコース</div>
-                <div className="course-pr">¥11,000<small>（税込）</small></div>
-              </div>
-              <div className="course-dc">旬の貝と野菜をふんだんに使ったコースメニュー</div>
-              <div>
-                <span className="tag">約2時間30分</span>
-              </div>
+              {settingsCourses.map((c, i) => (
+                <div key={i}
+                  className={`course-item${settingsCourses.length > 1 ? (selCourse === i ? ' sel' : '') : ''}`}
+                  onClick={() => settingsCourses.length > 1 && setSelCourse(i)}
+                  style={settingsCourses.length > 1 ? { cursor:'pointer', border: selCourse===i ? '2px solid #06c755' : '2px solid #e0e0e0', borderRadius:10, padding:'10px 12px', marginBottom: i < settingsCourses.length-1 ? 8 : 0 } : {}}>
+                  <div className="course-row">
+                    <div className="course-nm">{c.name}</div>
+                    <div className="course-pr">¥{Number(c.price).toLocaleString()}<small>（税込）</small></div>
+                  </div>
+                  {c.description && <div className="course-dc">{c.description}</div>}
+                  <div>
+                    <span className="tag">約{Math.floor((c.duration||150)/60)}時間{(c.duration||150)%60 > 0 ? (c.duration||150)%60+'分' : ''}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -676,10 +702,10 @@ export default function Home() {
             <div className="cf-row">
               <div className="cf-lbl">コース</div>
               <div className="cf-val">
-                季節の貝フルコース
+                {settingsCourses[selCourse]?.name || '季節の貝フルコース'}
                 <br />
                 <span style={{ fontSize: 12, fontWeight: 'normal', color: 'var(--sub)' }}>
-                  ¥11,000（税込）/ お一人様　・　約2時間30分
+                  ¥{Number(settingsCourses[selCourse]?.price || 11000).toLocaleString()}（税込）/ お一人様　・　約{Math.floor((settingsCourses[selCourse]?.duration||150)/60)}時間{(settingsCourses[selCourse]?.duration||150)%60 > 0 ? (settingsCourses[selCourse]?.duration||150)%60+'分' : ''}
                 </span>
               </div>
             </div>

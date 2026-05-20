@@ -38,6 +38,15 @@ function notifLabel(type) {
   if (type==='cancel') return { text:'キャンセル',bg:'#ffebee', color:'#c62828' }
   return { text: type, bg:'#f5f5f5', color:'#666' }
 }
+function fmtNotifDateTime(dt) {
+  if (!dt) return ''
+  const s = String(dt)
+  const m = s.match(/(\d{4})\/(\d{2})\/(\d{2})\s(\d{2}):(\d{2})/)
+  if (m) return `${parseInt(m[2])}/${parseInt(m[3])} ${m[4]}:${m[5]}`
+  const d = new Date(s)
+  if (!isNaN(d.getTime())) return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+  return s
+}
 
 // ── Shared UI ─────────────────────────────────────────────────────
 function Toast({ msg, type }) {
@@ -334,10 +343,13 @@ export default function Admin() {
   const [blockCalMonth, setBlockCalMonth] = useState(new Date().getMonth())
 
   // ── Notifications tab ────
-  const [notifs,       setNotifs]       = useState([])
-  const [notifLoading, setNotifLoading] = useState(false)
+  const [notifs,          setNotifs]          = useState([])
+  const [notifLoading,    setNotifLoading]    = useState(false)
+  const [selectedNotifIds,setSelectedNotifIds]= useState(new Set())
   // ── Settings tab ────
-  const [settings,       setSettings]       = useState({ maxSeats:8, courses:[], receptionStartTime:'17:00', receptionStopTime:'21:00' })
+  const defCutoff = { daysBefore:2, time:'22:00' }
+  const defCutoffRules = { '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff, '3':defCutoff, '4':defCutoff, '5':defCutoff, '6':{ daysBefore:3, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' } }
+  const [settings,       setSettings]       = useState({ maxSeats:8, courses:[], receptionStartTime:'17:00', receptionStopTime:'21:00', timeRanges:[{ start:'17:00', end:'21:00', label:'ディナー' }], cutoffRules: defCutoffRules })
   const [settingsLoading,setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving]  = useState(false)
   const [editCourseIdx,  setEditCourseIdx]   = useState(-1)
@@ -421,7 +433,14 @@ export default function Admin() {
     setSettingsLoading(true)
     try {
       const r = await api.getSettings()
-      if (r.success) setSettings({ maxSeats: r.maxSeats||8, courses: r.courses||[], receptionStartTime: r.receptionStartTime||'17:00', receptionStopTime: r.receptionStopTime||'21:00' })
+      if (r.success) setSettings({
+        maxSeats: r.maxSeats||8,
+        courses: r.courses||[],
+        receptionStartTime: r.receptionStartTime||'17:00',
+        receptionStopTime: r.receptionStopTime||'21:00',
+        timeRanges: r.timeRanges||[{ start:'17:00', end:'21:00', label:'ディナー' }],
+        cutoffRules: r.cutoffRules||defCutoffRules,
+      })
     } catch {}
     setSettingsLoading(false)
   }
@@ -509,9 +528,20 @@ export default function Admin() {
   // ── Notification actions ─────────────────────────────────────────
   async function markRead(id) {
     setNotifs(ns => ns.filter(n => n.id !== id))
+    setSelectedNotifIds(prev => { const s = new Set(prev); s.delete(id); return s })
     try {
       const r = await api.adminMarkNotificationRead(pwRef.current, id)
       if (!r.success) { showToast(r.error||'エラー','error'); loadNotifications() }
+    } catch { showToast('通信エラー','error'); loadNotifications() }
+  }
+
+  async function markAllSelected() {
+    const ids = [...selectedNotifIds]
+    if (ids.length === 0) return
+    setNotifs(ns => ns.filter(n => !selectedNotifIds.has(n.id)))
+    setSelectedNotifIds(new Set())
+    try {
+      await Promise.all(ids.map(id => api.adminMarkNotificationRead(pwRef.current, id)))
     } catch { showToast('通信エラー','error'); loadNotifications() }
   }
 
@@ -773,9 +803,11 @@ export default function Admin() {
                     <div style={{ fontSize:13, fontWeight:'bold', marginBottom:10, color:'#e65100' }}>予約停止枠の設定</div>
                     <div style={{ display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
                       <Field label="停止席数">
-                        <input type="number" min={1} max={8} value={seatInput.seats}
+                        <select value={seatInput.seats}
                           onChange={e => setSeatInput(s=>({...s, seats:parseInt(e.target.value)||1}))}
-                          style={{ ...iStyle, width:80 }} />
+                          style={{ ...iStyle, width:90 }}>
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}席</option>)}
+                        </select>
                       </Field>
                       <Field label="理由（任意）">
                         <input type="text" value={seatInput.reason} placeholder="個室使用など"
@@ -837,7 +869,9 @@ export default function Admin() {
                 }
                 <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
                   <input type="date" value={newSeatDate} onChange={e=>setNewSeatDate(e.target.value)} style={{ ...iStyle, width:'auto', padding:'7px 10px', fontSize:13 }} />
-                  <input type="number" min={1} max={8} value={newSeatSeats} onChange={e=>setNewSeatSeats(parseInt(e.target.value)||1)} style={{ ...iStyle, width:60, padding:'7px 8px', fontSize:13 }} />
+                  <select value={newSeatSeats} onChange={e=>setNewSeatSeats(parseInt(e.target.value)||1)} style={{ ...iStyle, width:80, padding:'7px 8px', fontSize:13 }}>
+                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}席</option>)}
+                  </select>
                   <input type="text" value={newSeatRsn} placeholder="理由（任意）" onChange={e=>setNewSeatRsn(e.target.value)} style={{ ...iStyle, flex:1, minWidth:80, padding:'7px 10px', fontSize:13 }} />
                   <button onClick={addSeatBlock} style={btnGreen}>追加</button>
                 </div>
@@ -849,9 +883,17 @@ export default function Admin() {
         {/* ─── TAB: 通知一覧 ──────────────────────────────────────── */}
         {tab==='notifications' && (
           <>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12, flexWrap:'wrap', gap:8 }}>
               <h2 style={{ fontSize:15, fontWeight:'bold' }}>通知一覧 {notifs.length>0 && <span style={{ fontSize:13, color:'#888', fontWeight:'normal' }}>（{notifs.length}件）</span>}</h2>
-              <button onClick={loadNotifications} style={btnGray}>更新</button>
+              <div style={{ display:'flex', gap:8 }}>
+                {selectedNotifIds.size > 0 && (
+                  <button onClick={markAllSelected}
+                    style={{ ...btnGreen, fontSize:13, padding:'8px 16px' }}>
+                    選択済み{selectedNotifIds.size}件を確認済みに
+                  </button>
+                )}
+                <button onClick={loadNotifications} style={btnGray}>更新</button>
+              </div>
             </div>
 
             {notifLoading ? (
@@ -861,34 +903,47 @@ export default function Admin() {
                 未確認の通知はありません
               </div>
             ) : (
-              notifs.map(n => {
-                const lbl = notifLabel(n.type)
-                return (
-                  <div key={n.id} style={{ background:'#fff', borderRadius:12, marginBottom:8, boxShadow:'0 1px 3px rgba(0,0,0,.08)', padding:'14px 16px', display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5, flexWrap:'wrap' }}>
-                        <span style={{ background:lbl.bg, color:lbl.color, padding:'2px 10px', borderRadius:12, fontSize:12, fontWeight:'bold', whiteSpace:'nowrap' }}>{lbl.text}</span>
-                        <span style={{ fontSize:14, fontWeight:'bold' }}>{n.name} 様</span>
-                        <span style={{ fontSize:12, color:'#aaa' }}>{n.datetime}</span>
+              <>
+                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8, fontSize:12, color:'#888' }}>
+                  <label style={{ display:'flex', alignItems:'center', gap:4, cursor:'pointer' }}>
+                    <input type="checkbox"
+                      checked={notifs.length > 0 && selectedNotifIds.size === notifs.length}
+                      onChange={e => setSelectedNotifIds(e.target.checked ? new Set(notifs.map(n=>n.id)) : new Set())} />
+                    すべて選択
+                  </label>
+                </div>
+                {notifs.map(n => {
+                  const lbl = notifLabel(n.type)
+                  const checked = selectedNotifIds.has(n.id)
+                  return (
+                    <div key={n.id} style={{ background: checked ? '#f0fff4' : '#fff', borderRadius:12, marginBottom:8, boxShadow:'0 1px 3px rgba(0,0,0,.08)', padding:'14px 16px', display:'flex', alignItems:'flex-start', gap:10, border: checked ? '1.5px solid #06c755' : '1.5px solid transparent' }}>
+                      <input type="checkbox" checked={checked} style={{ marginTop:4, flexShrink:0 }}
+                        onChange={e => setSelectedNotifIds(prev => { const s=new Set(prev); e.target.checked ? s.add(n.id) : s.delete(n.id); return s })} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5, flexWrap:'wrap' }}>
+                          <span style={{ background:lbl.bg, color:lbl.color, padding:'2px 10px', borderRadius:12, fontSize:12, fontWeight:'bold', whiteSpace:'nowrap' }}>{lbl.text}</span>
+                          <span style={{ fontSize:14, fontWeight:'bold' }}>{n.name} 様</span>
+                          <span style={{ fontSize:12, color:'#aaa' }}>{fmtNotifDateTime(n.datetime)}</span>
+                        </div>
+                        <div style={{ fontSize:13, color:'#444', marginBottom:2 }}>
+                          {n.date && fmtDate(n.date)}
+                          {n.time && <span style={{ marginLeft:8 }}>{formatTime(n.time)}〜{formatTime(n.endTime)}</span>}
+                          {n.guests && <span style={{ marginLeft:8 }}>{n.guests}名</span>}
+                          {n.phone && <span style={{ marginLeft:8, color:'#888' }}>{n.phone}</span>}
+                        </div>
+                        {n.type==='change' && n.oldDate && (
+                          <div style={{ fontSize:12, color:'#888' }}>変更前: {fmtDate(n.oldDate)} {formatTime(n.oldTime)}〜</div>
+                        )}
+                        {n.notes && <div style={{ fontSize:12, color:'#888' }}>メモ: {n.notes}</div>}
                       </div>
-                      <div style={{ fontSize:13, color:'#444', marginBottom:2 }}>
-                        {n.date && fmtDate(n.date)}
-                        {n.time && <span style={{ marginLeft:8 }}>{formatTime(n.time)}〜{formatTime(n.endTime)}</span>}
-                        {n.guests && <span style={{ marginLeft:8 }}>{n.guests}名</span>}
-                        {n.phone && <span style={{ marginLeft:8, color:'#888' }}>{n.phone}</span>}
-                      </div>
-                      {n.type==='change' && n.oldDate && (
-                        <div style={{ fontSize:12, color:'#888' }}>変更前: {fmtDate(n.oldDate)} {formatTime(n.oldTime)}〜</div>
-                      )}
-                      {n.notes && <div style={{ fontSize:12, color:'#888' }}>メモ: {n.notes}</div>}
+                      <button onClick={() => markRead(n.id)}
+                        style={{ ...btnGray, fontSize:12, background:'#e8f5e9', color:'#2e7d32', flexShrink:0, alignSelf:'center', padding:'8px 14px' }}>
+                        確認
+                      </button>
                     </div>
-                    <button onClick={() => markRead(n.id)}
-                      style={{ ...btnGray, fontSize:13, background:'#e8f5e9', color:'#2e7d32', flexShrink:0, alignSelf:'center', padding:'10px 16px' }}>
-                      確認
-                    </button>
-                  </div>
-                )
-              })
+                  )
+                })}
+              </>
             )}
           </>
         )}
@@ -911,20 +966,68 @@ export default function Admin() {
                         style={{ ...iStyle, width:80 }} />
                       <span style={{ fontSize:12, color:'#aaa' }}>名</span>
                     </div>
-                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                      <label style={{ fontSize:13, color:'#555', whiteSpace:'nowrap' }}>受付開始時間</label>
-                      <input type="time" value={settings.receptionStartTime}
-                        onChange={e => setSettings(s=>({...s, receptionStartTime:e.target.value}))}
-                        style={{ ...iStyle, width:120 }} />
-                    </div>
-                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                      <label style={{ fontSize:13, color:'#555', whiteSpace:'nowrap' }}>受付停止時間</label>
-                      <input type="time" value={settings.receptionStopTime}
-                        onChange={e => setSettings(s=>({...s, receptionStopTime:e.target.value}))}
-                        style={{ ...iStyle, width:120 }} />
-                      <span style={{ fontSize:12, color:'#aaa' }}>以降は新規受付停止</span>
-                    </div>
                   </div>
+                </div>
+
+                {/* 受付可能時間帯 */}
+                <div style={{ background:'#fff', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+                    <h2 style={{ fontSize:15, fontWeight:'bold' }}>受付可能時間帯</h2>
+                    {(settings.timeRanges||[]).length < 2 && (
+                      <button onClick={() => setSettings(s=>({...s, timeRanges:[...(s.timeRanges||[]), { start:'11:30', end:'14:00', label:'ランチ' }]}))}
+                        style={{ ...btnGray, fontSize:12 }}>＋ 追加</button>
+                    )}
+                  </div>
+                  {(settings.timeRanges||[]).map((tr,i) => (
+                    <div key={i} style={{ display:'flex', gap:10, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
+                      <input type="text" value={tr.label} placeholder="ディナー" onChange={e=>setSettings(s=>{ const a=[...s.timeRanges]; a[i]={...a[i],label:e.target.value}; return {...s,timeRanges:a} })}
+                        style={{ ...iStyle, width:90 }} />
+                      <input type="time" value={tr.start} onChange={e=>setSettings(s=>{ const a=[...s.timeRanges]; a[i]={...a[i],start:e.target.value}; return {...s,timeRanges:a} })}
+                        style={{ ...iStyle, width:110 }} />
+                      <span style={{ fontSize:13, color:'#888' }}>〜</span>
+                      <input type="time" value={tr.end} onChange={e=>setSettings(s=>{ const a=[...s.timeRanges]; a[i]={...a[i],end:e.target.value}; return {...s,timeRanges:a} })}
+                        style={{ ...iStyle, width:110 }} />
+                      <button onClick={() => setSettings(s=>({...s, timeRanges:s.timeRanges.filter((_,j)=>j!==i)}))} style={btnRed}>削除</button>
+                    </div>
+                  ))}
+                  {(settings.timeRanges||[]).length === 0 && <div style={{ fontSize:12, color:'#bbb' }}>時間帯が設定されていません</div>}
+                </div>
+
+                {/* 受付締め切りルール */}
+                <div style={{ background:'#fff', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14 }}>受付締め切りルール（曜日別）</h2>
+                  <div style={{ fontSize:12, color:'#888', marginBottom:12 }}>来店日の何日前の何時まで受付するかを曜日ごとに設定します</div>
+                  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                    <thead>
+                      <tr style={{ borderBottom:'2px solid #f0f0f0' }}>
+                        <th style={{ textAlign:'left', padding:'6px 8px', color:'#888', fontWeight:'normal', width:60 }}>曜日</th>
+                        <th style={{ textAlign:'left', padding:'6px 8px', color:'#888', fontWeight:'normal' }}>何日前まで</th>
+                        <th style={{ textAlign:'left', padding:'6px 8px', color:'#888', fontWeight:'normal' }}>締め切り時刻</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[['0','日'],['1','月'],['2','火'],['3','水'],['4','木'],['5','金'],['6','土'],['holiday','祝']].map(([key,label]) => {
+                        const rule = (settings.cutoffRules||{})[key] || { daysBefore:2, time:'22:00' }
+                        return (
+                          <tr key={key} style={{ borderBottom:'1px solid #f5f5f5' }}>
+                            <td style={{ padding:'8px 8px', fontWeight:'bold', color: key==='0'||key==='6'||key==='holiday' ? '#e53935' : '#333' }}>{label}</td>
+                            <td style={{ padding:'6px 8px' }}>
+                              <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                                <select value={rule.daysBefore} style={{ ...iStyle, width:65, padding:'5px 6px', fontSize:12 }}
+                                  onChange={e=>setSettings(s=>({...s, cutoffRules:{...s.cutoffRules, [key]:{...rule, daysBefore:parseInt(e.target.value)||1}}}))} >
+                                  {[1,2,3,4,5,6,7].map(n=><option key={n} value={n}>{n}日前</option>)}
+                                </select>
+                              </div>
+                            </td>
+                            <td style={{ padding:'6px 8px' }}>
+                              <input type="time" value={rule.time} style={{ ...iStyle, width:110, padding:'5px 8px', fontSize:12 }}
+                                onChange={e=>setSettings(s=>({...s, cutoffRules:{...s.cutoffRules, [key]:{...rule, time:e.target.value}}}))} />
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
 
                 {/* コースメニュー */}
