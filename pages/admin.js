@@ -141,7 +141,7 @@ function CalNav({ year, month, onPrev, onNext }) {
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────
-function EditModal({ res, pwRef, onClose, onSaved, showToast }) {
+function EditModal({ res, onClose, onSaved, showToast }) {
   const [data, setData] = useState({
     name:   res.name,
     phone:  res.phone,
@@ -159,7 +159,7 @@ function EditModal({ res, pwRef, onClose, onSaved, showToast }) {
   async function save() {
     setSaving(true)
     try {
-      const r = await api.adminUpdateReservation(pwRef.current, { id:res.id, ...data, date: data.date.replace(/-/g,'/') })
+      const r = await api.adminUpdateReservation({ id:res.id, ...data, date: data.date.replace(/-/g,'/') })
       if (r.success) { showToast('更新しました'); onSaved() }
       else showToast(r.error||'更新に失敗しました','error')
     } catch { showToast('通信エラー','error') }
@@ -217,7 +217,7 @@ function EditModal({ res, pwRef, onClose, onSaved, showToast }) {
 }
 
 // ── Add Modal ─────────────────────────────────────────────────────
-function AddModal({ initialDate, pwRef, onClose, onAdded, showToast }) {
+function AddModal({ initialDate, onClose, onAdded, showToast }) {
   const [data, setData] = useState({
     date: initialDate ? initialDate.replace(/\//g,'-') : '',
     time:'', name:'', phone:'', guests:'2',
@@ -232,7 +232,7 @@ function AddModal({ initialDate, pwRef, onClose, onAdded, showToast }) {
     if (!data.date||!data.time||!data.name||!data.phone) return setErr('日付・時間・名前・電話番号は必須です')
     setAdding(true); setErr('')
     try {
-      const r = await api.adminAddReservation(pwRef.current, {...data, date: data.date.replace(/-/g,'/')})
+      const r = await api.adminAddReservation({...data, date: data.date.replace(/-/g,'/')})
       if (r.blocked && !data.forceAdd) {
         setErr('⚠️ '+r.reason+'\n「強制登録」にチェックして再送信してください。')
         setAdding(false); return
@@ -306,12 +306,7 @@ function AddModal({ initialDate, pwRef, onClose, onAdded, showToast }) {
 
 // ── Main Admin ────────────────────────────────────────────────────
 export default function Admin() {
-  const pwRef     = useRef('')
-  const [authed,    setAuthed]    = useState(false)
-  const [pwd,       setPwd]       = useState('')
-  const [loginErr,  setLoginErr]  = useState('')
-  const [loggingIn, setLoggingIn] = useState(false)
-  const [tab,       setTab]       = useState('reservations')
+  const [tab, setTab] = useState('reservations')
   const [toast,     setToast]     = useState({ msg:'', type:'ok' })
 
   // Calendar nav (shared)
@@ -334,13 +329,7 @@ export default function Admin() {
   const [blocked,       setBlocked]       = useState([])
   const [seatBlocks,    setSeatBlocks]    = useState([])
   const [blockLoading,  setBlockLoading]  = useState(false)
-  const [newClosedDate, setNewClosedDate] = useState('')
-  const [newClosedRsn,  setNewClosedRsn]  = useState('')
-  const [newSeatDate,   setNewSeatDate]   = useState('')
-  const [newSeatSeats,  setNewSeatSeats]  = useState(4)
-  const [newSeatRsn,    setNewSeatRsn]    = useState('')
-  const [blockCalYear,  setBlockCalYear]  = useState(new Date().getFullYear())
-  const [blockCalMonth, setBlockCalMonth] = useState(new Date().getMonth())
+  const [closedDayAdding, setClosedDayAdding] = useState(false)
 
   // ── Notifications tab ────
   const [notifs,          setNotifs]          = useState([])
@@ -349,56 +338,40 @@ export default function Admin() {
   // ── Settings tab ────
   const defCutoff = { daysBefore:2, time:'22:00' }
   const defCutoffRules = { '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff, '3':defCutoff, '4':defCutoff, '5':defCutoff, '6':{ daysBefore:3, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' } }
-  const [settings,       setSettings]       = useState({ maxSeats:8, courses:[], receptionStartTime:'17:00', receptionStopTime:'21:00', timeRanges:[{ start:'17:00', end:'21:00', label:'ディナー' }], cutoffRules: defCutoffRules })
+  const defTimeRanges = [{ type:'lunch', label:'ランチ', start:'11:30', end:'14:00' }, { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' }]
+  const [settings, setSettings] = useState({ maxSeats:8, courses:[], timeRanges: defTimeRanges, cutoffRules: defCutoffRules })
   const [settingsLoading,setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving]  = useState(false)
   const [editCourseIdx,  setEditCourseIdx]   = useState(-1)
   const [editCourse,     setEditCourse]      = useState({})
   const [showAddCourse,  setShowAddCourse]   = useState(false)
-  const [newCourse,      setNewCourse]       = useState({ name:'', price:'', description:'', duration:150 })
+  const [newCourse,      setNewCourse]       = useState({ name:'', price:'', description:'', duration:150, mealType:'dinner' })
 
   function showToast(msg, type='ok') {
     setToast({ msg, type })
     setTimeout(() => setToast({ msg:'', type:'ok' }), 3000)
   }
 
-  // ── Auth ────────────────────────────────────────────────────────
+  // ── Auto-load on mount ──────────────────────────────────────────
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const saved = sessionStorage.getItem('admin_pw')
-    if (saved) {
-      api.adminAuth(saved).then(r => {
-        if (r.ok) { pwRef.current = saved; setPwd(saved); setAuthed(true) }
-      }).catch(() => {})
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!authed) return
     loadReservations()
     loadBlocked()
     loadSeatBlocks()
     loadNotifications()
     loadSettings()
-  }, [authed])
+  }, [])
 
-  async function doLogin() {
-    const p = pwd.trim()
-    if (!p) return setLoginErr('パスワードを入力してください')
-    setLoggingIn(true); setLoginErr('')
-    try {
-      const r = await api.adminAuth(p)
-      if (r.ok) { pwRef.current = p; sessionStorage.setItem('admin_pw', p); setAuthed(true) }
-      else setLoginErr('パスワードが正しくありません')
-    } catch { setLoginErr('通信エラーが発生しました') }
-    setLoggingIn(false)
-  }
+  useEffect(() => {
+    const block = selectedDate ? seatBlockMap[selectedDate] : null
+    if (block) setSeatInput({ seats: block.blockedSeats, reason: block.reason || '' })
+    else { setSeatInput({ seats:4, reason:'' }); setShowSeatForm(false) }
+  }, [selectedDate, seatBlockMap])
 
   // ── Data loaders ────────────────────────────────────────────────
   async function loadReservations() {
     setResLoading(true)
     try {
-      const r = await api.adminGetReservations(pwRef.current, {})
+      const r = await api.adminGetReservations({})
       setReservations(r.list || [])
     } catch { setReservations([]) }
     setResLoading(false)
@@ -407,7 +380,7 @@ export default function Admin() {
   async function loadBlocked() {
     setBlockLoading(true)
     try {
-      const r = await api.adminGetBlockedDates(pwRef.current)
+      const r = await api.adminGetBlockedDates()
       setBlocked(r.list || [])
     } catch { setBlocked([]) }
     setBlockLoading(false)
@@ -415,7 +388,7 @@ export default function Admin() {
 
   async function loadSeatBlocks() {
     try {
-      const r = await api.adminGetSeatBlocks(pwRef.current)
+      const r = await api.adminGetSeatBlocks()
       setSeatBlocks(r.list || [])
     } catch { setSeatBlocks([]) }
   }
@@ -423,7 +396,7 @@ export default function Admin() {
   async function loadNotifications() {
     setNotifLoading(true)
     try {
-      const r = await api.adminGetNotifications(pwRef.current)
+      const r = await api.adminGetNotifications()
       setNotifs(r.list || [])
     } catch { setNotifs([]) }
     setNotifLoading(false)
@@ -433,14 +406,15 @@ export default function Admin() {
     setSettingsLoading(true)
     try {
       const r = await api.getSettings()
-      if (r.success) setSettings({
-        maxSeats: r.maxSeats||8,
-        courses: r.courses||[],
-        receptionStartTime: r.receptionStartTime||'17:00',
-        receptionStopTime: r.receptionStopTime||'21:00',
-        timeRanges: r.timeRanges||[{ start:'17:00', end:'21:00', label:'ディナー' }],
-        cutoffRules: r.cutoffRules||defCutoffRules,
-      })
+      if (r.success) {
+        const tr = (r.timeRanges && r.timeRanges.length > 0) ? r.timeRanges : defTimeRanges
+        setSettings({
+          maxSeats: r.maxSeats||8,
+          courses: r.courses||[],
+          timeRanges: tr,
+          cutoffRules: r.cutoffRules||defCutoffRules,
+        })
+      }
     } catch {}
     setSettingsLoading(false)
   }
@@ -449,7 +423,7 @@ export default function Admin() {
   async function cancelRes(id) {
     setCancelingResId(id)
     try {
-      const r = await api.adminUpdateReservation(pwRef.current, { id, status: 'キャンセル' })
+      const r = await api.adminUpdateReservation({ id, status: 'キャンセル' })
       if (r.success) { showToast('キャンセルしました'); loadReservations() }
       else showToast(r.error||'キャンセルに失敗しました','error')
     } catch { showToast('通信エラー','error') }
@@ -459,7 +433,7 @@ export default function Admin() {
   async function deleteRes(id) {
     setCancelingResId(id)
     try {
-      const r = await api.adminDeleteReservation(pwRef.current, id)
+      const r = await api.adminDeleteReservation(id)
       if (r.success) { showToast('削除しました'); loadReservations() }
       else showToast(r.error||'削除に失敗しました','error')
     } catch { showToast('通信エラー','error') }
@@ -471,8 +445,8 @@ export default function Admin() {
     if (!selectedDate) return
     setSeatSaving(true)
     try {
-      const r = await api.adminSetSeatBlock(pwRef.current, selectedDate.replace(/\//g,'-'), seatInput.seats, seatInput.reason)
-      if (r.success) { showToast('予約停止枠を設定しました'); setShowSeatForm(false); loadSeatBlocks() }
+      const r = await api.adminSetSeatBlock(selectedDate.replace(/\//g,'-'), seatInput.seats, seatInput.reason)
+      if (r.success) { showToast('受付停止枠を設定しました'); setShowSeatForm(false); loadSeatBlocks() }
       else showToast(r.error||'設定に失敗しました','error')
     } catch { showToast('通信エラー','error') }
     setSeatSaving(false)
@@ -482,45 +456,17 @@ export default function Admin() {
     if (!selectedDate) return
     setSeatSaving(true)
     try {
-      const r = await api.adminRemoveSeatBlock(pwRef.current, selectedDate.replace(/\//g,'-'))
-      if (r.success) { showToast('予約停止枠を解除しました'); setShowSeatForm(false); loadSeatBlocks() }
+      const r = await api.adminRemoveSeatBlock(selectedDate.replace(/\//g,'-'))
+      if (r.success) { showToast('受付停止枠を解除しました'); setShowSeatForm(false); loadSeatBlocks() }
       else showToast(r.error||'エラー','error')
     } catch { showToast('通信エラー','error') }
     setSeatSaving(false)
   }
 
-  // ── Block tab actions ────────────────────────────────────────────
-  async function addClosedDay() {
-    if (!newClosedDate) return showToast('日付を選択してください','error')
-    try {
-      const r = await api.adminSetBlockedDate(pwRef.current, newClosedDate, newClosedRsn)
-      if (r.success) { showToast('休業日を設定しました'); setNewClosedDate(''); setNewClosedRsn(''); loadBlocked() }
-      else showToast(r.error||'設定に失敗しました','error')
-    } catch { showToast('通信エラー','error') }
-  }
-
   async function removeClosedDay(date) {
     try {
-      const r = await api.adminRemoveBlockedDate(pwRef.current, date)
-      if (r.success) { showToast('削除しました'); loadBlocked() }
-      else showToast(r.error||'エラー','error')
-    } catch { showToast('通信エラー','error') }
-  }
-
-  async function addSeatBlock() {
-    if (!newSeatDate)          return showToast('日付を選択してください','error')
-    if (newSeatSeats < 1)      return showToast('1以上の席数を入力してください','error')
-    try {
-      const r = await api.adminSetSeatBlock(pwRef.current, newSeatDate, newSeatSeats, newSeatRsn)
-      if (r.success) { showToast('予約停止枠を設定しました'); setNewSeatDate(''); setNewSeatSeats(4); setNewSeatRsn(''); loadSeatBlocks() }
-      else showToast(r.error||'設定に失敗しました','error')
-    } catch { showToast('通信エラー','error') }
-  }
-
-  async function removeSeatBlock(date) {
-    try {
-      const r = await api.adminRemoveSeatBlock(pwRef.current, date)
-      if (r.success) { showToast('削除しました'); loadSeatBlocks() }
+      const r = await api.adminRemoveBlockedDate(date)
+      if (r.success) { showToast('解除しました'); loadBlocked() }
       else showToast(r.error||'エラー','error')
     } catch { showToast('通信エラー','error') }
   }
@@ -530,7 +476,7 @@ export default function Admin() {
     setNotifs(ns => ns.filter(n => n.id !== id))
     setSelectedNotifIds(prev => { const s = new Set(prev); s.delete(id); return s })
     try {
-      const r = await api.adminMarkNotificationRead(pwRef.current, id)
+      const r = await api.adminMarkNotificationRead(id)
       if (!r.success) { showToast(r.error||'エラー','error'); loadNotifications() }
     } catch { showToast('通信エラー','error'); loadNotifications() }
   }
@@ -541,7 +487,7 @@ export default function Admin() {
     setNotifs(ns => ns.filter(n => !selectedNotifIds.has(n.id)))
     setSelectedNotifIds(new Set())
     try {
-      await Promise.all(ids.map(id => api.adminMarkNotificationRead(pwRef.current, id)))
+      await Promise.all(ids.map(id => api.adminMarkNotificationRead(id)))
     } catch { showToast('通信エラー','error'); loadNotifications() }
   }
 
@@ -549,7 +495,7 @@ export default function Admin() {
   async function doSaveSettings() {
     setSettingsSaving(true)
     try {
-      const r = await api.saveSettings(pwRef.current, settings)
+      const r = await api.saveSettings(settings)
       if (r.success) showToast('設定を保存しました')
       else showToast(r.error||'保存に失敗しました','error')
     } catch { showToast('通信エラー','error') }
@@ -557,12 +503,14 @@ export default function Admin() {
   }
 
   function addClosedDay2(date) {
-    api.adminSetBlockedDate(pwRef.current, date.replace(/\//g,'-'), '')
+    setClosedDayAdding(true)
+    api.adminSetBlockedDate(date.replace(/\//g,'-'), '')
       .then(r => {
         if (r.success) { showToast('休業日に設定しました'); loadBlocked() }
         else showToast(r.error||'設定に失敗しました','error')
       })
       .catch(() => showToast('通信エラー','error'))
+      .finally(() => setClosedDayAdding(false))
   }
 
   // ── Computed ─────────────────────────────────────────────────────
@@ -614,30 +562,6 @@ export default function Admin() {
   function prevMonth(y, m, setY, setM) { if (m===0) { setY(y-1); setM(11) } else setM(m-1) }
   function nextMonth(y, m, setY, setM) { if (m===11) { setY(y+1); setM(0)  } else setM(m+1) }
 
-  // ── Login ──────────────────────────────────────────────────────
-  if (!authed) return (
-    <>
-      <Head><title>ログイン | 貝屋和光 管理画面</title></Head>
-      <div style={{ minHeight:'100vh', background:'#f0f0f0', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
-        <div style={{ background:'#fff', borderRadius:16, padding:'40px 32px', width:'100%', maxWidth:360, boxShadow:'0 4px 20px rgba(0,0,0,.1)' }}>
-          <h1 style={{ textAlign:'center', fontSize:18, fontWeight:'bold', marginBottom:6 }}>貝屋和光 管理画面</h1>
-          <p style={{ textAlign:'center', fontSize:12, color:'#888', marginBottom:28 }}>管理者パスワードを入力してください</p>
-          <input type="password" value={pwd}
-            onChange={e => setPwd(e.target.value)}
-            onKeyDown={e => e.key==='Enter' && doLogin()}
-            placeholder="パスワード"
-            style={{ ...iStyle, fontSize:16, padding:'13px 14px', marginBottom:12 }} />
-          {loginErr && <p style={{ color:'#e53935', fontSize:13, marginBottom:10 }}>{loginErr}</p>}
-          <button disabled={loggingIn} onClick={doLogin}
-            style={{ width:'100%', padding:16, background:'#06c755', color:'#fff', border:'none', borderRadius:12, fontSize:16, fontWeight:'bold', cursor:'pointer' }}>
-            {loggingIn?'認証中...':'ログイン'}
-          </button>
-        </div>
-      </div>
-      <style jsx global>{`* { box-sizing:border-box; margin:0; padding:0; } body { font-family:-apple-system,'Hiragino Sans',sans-serif; }`}</style>
-    </>
-  )
-
   // ── Main ──────────────────────────────────────────────────────
   return (
     <>
@@ -646,10 +570,9 @@ export default function Admin() {
       {/* Header */}
       <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', position:'sticky', top:0, zIndex:10 }}>
         <h1 style={{ fontSize:16, fontWeight:'bold', color:'#fff' }}>貝屋和光 管理画面</h1>
-        <button
-          onClick={() => { sessionStorage.removeItem('admin_pw'); setAuthed(false); setPwd(''); pwRef.current='' }}
+        <button onClick={loadReservations}
           style={{ background:'rgba(255,255,255,.2)', border:'none', color:'#fff', padding:'6px 14px', borderRadius:6, fontSize:12, cursor:'pointer' }}>
-          ログアウト
+          更新
         </button>
       </div>
 
@@ -771,36 +694,42 @@ export default function Admin() {
                   </div>
                 )}
 
-                {/* Action buttons */}
-                <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-                  <button onClick={() => { setAddInitDate(selectedDate); setShowAddModal(true) }}
-                    style={{ ...btnGreen, fontSize:13 }}>
-                    ＋ 新規登録
-                  </button>
-                  <button onClick={() => {
-                    setSeatInput({ seats: daySeatBlock?.blockedSeats||4, reason: daySeatBlock?.reason||'' })
-                    setShowSeatForm(f => !f)
-                  }}
-                    style={{ ...btnGray, background: showSeatForm?'#e0e0e0':'#f0f0f0' }}>
-                    予約ブロック
-                  </button>
-                  {dayIsBlocked ? (
-                    <button onClick={() => removeClosedDay(selectedDate)}
-                      style={{ ...btnRed }}>
-                      休業日を解除
-                    </button>
-                  ) : (
-                    <button onClick={() => addClosedDay2(selectedDate)}
-                      style={{ ...btnGray, color:'#c62828', border:'1px solid #ffcccc' }}>
-                      休業日に設定
-                    </button>
-                  )}
-                </div>
+                {/* ＋新規登録 */}
+                <button onClick={() => { setAddInitDate(selectedDate); setShowAddModal(true) }}
+                  style={{ ...btnGreen, fontSize:13, marginBottom:10 }}>
+                  ＋ 新規登録
+                </button>
 
-                {/* Seat block inline form */}
-                {showSeatForm && (
-                  <div style={{ marginTop:12, padding:14, background:'#fff8f0', border:'1px solid #ffe0b2', borderRadius:8 }}>
-                    <div style={{ fontSize:13, fontWeight:'bold', marginBottom:10, color:'#e65100' }}>予約停止枠の設定</div>
+                {/* 受付停止席 */}
+                {daySeatBlock ? (
+                  <div style={{ marginTop:4, padding:14, background:'#fff8f0', border:'1px solid #ffe0b2', borderRadius:8 }}>
+                    <div style={{ fontSize:12, fontWeight:'bold', color:'#e65100', marginBottom:8 }}>受付停止席</div>
+                    <div style={{ display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
+                      <Field label="停止席数">
+                        <select value={seatInput.seats}
+                          onChange={e => setSeatInput(s=>({...s, seats:parseInt(e.target.value)||1}))}
+                          style={{ ...iStyle, width:90 }}>
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}席</option>)}
+                        </select>
+                      </Field>
+                      <Field label="理由（任意）">
+                        <input type="text" value={seatInput.reason} placeholder="個室使用など"
+                          onChange={e => setSeatInput(s=>({...s, reason:e.target.value}))}
+                          style={{ ...iStyle, minWidth:160 }} />
+                      </Field>
+                      <button disabled={seatSaving} onClick={saveSeatBlockForDay}
+                        style={{ ...btnGreen, alignSelf:'flex-end' }}>
+                        {seatSaving?'処理中...':'更新する'}
+                      </button>
+                      <button disabled={seatSaving} onClick={removeSeatBlockForDay}
+                        style={{ ...btnRed, alignSelf:'flex-end', padding:'9px 16px' }}>
+                        {seatSaving?'処理中...':'解除する'}
+                      </button>
+                    </div>
+                  </div>
+                ) : showSeatForm ? (
+                  <div style={{ marginTop:4, padding:14, background:'#fff8f0', border:'1px solid #ffe0b2', borderRadius:8 }}>
+                    <div style={{ fontSize:12, fontWeight:'bold', color:'#e65100', marginBottom:8 }}>受付停止席を設定</div>
                     <div style={{ display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
                       <Field label="停止席数">
                         <select value={seatInput.seats}
@@ -818,14 +747,28 @@ export default function Admin() {
                         style={{ ...btnGreen, alignSelf:'flex-end' }}>
                         {seatSaving?'処理中...':'設定する'}
                       </button>
-                      {daySeatBlock && (
-                        <button disabled={seatSaving} onClick={removeSeatBlockForDay}
-                          style={{ ...btnRed, alignSelf:'flex-end', padding:'9px 16px' }}>
-                          解除する
-                        </button>
-                      )}
+                      <button onClick={() => setShowSeatForm(false)} style={{ ...btnGray, alignSelf:'flex-end' }}>キャンセル</button>
                     </div>
                   </div>
+                ) : (
+                  <button onClick={() => { setSeatInput({ seats:4, reason:'' }); setShowSeatForm(true) }}
+                    style={{ ...btnGray, fontSize:13, marginTop:4, color:'#e65100', border:'1px solid #ffe0b2' }}>
+                    受付停止枠を設定
+                  </button>
+                )}
+
+                {/* 休業日 */}
+                {dayIsBlocked ? (
+                  <div style={{ marginTop:8, padding:14, background:'#ffebee', border:'1px solid #ffcccc', borderRadius:8, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                    <span style={{ fontSize:13, fontWeight:'bold', color:'#c62828' }}>休業日設定中</span>
+                    <button onClick={() => removeClosedDay(selectedDate)} style={{ ...btnRed }}>解除</button>
+                  </div>
+                ) : (
+                  <button onClick={() => addClosedDay2(selectedDate)}
+                    disabled={closedDayAdding}
+                    style={{ ...btnGray, fontSize:13, marginTop:8, color:'#c62828', border:'1px solid #ffcccc', opacity: closedDayAdding ? 0.6 : 1 }}>
+                    {closedDayAdding ? '設定中...' : '休業日に設定'}
+                  </button>
                 )}
               </div>
             )}
@@ -835,48 +778,6 @@ export default function Admin() {
                 日付をタップすると予約一覧が表示されます
               </div>
             )}
-
-            {/* 制限設定 */}
-            <div style={{ background:'#fff', borderRadius:12, padding:16, marginTop:4, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
-              <h2 style={{ fontSize:14, fontWeight:'bold', marginBottom:12, color:'#555' }}>制限設定</h2>
-              <div style={{ marginBottom:14 }}>
-                <div style={{ fontSize:12, fontWeight:'bold', color:'#c62828', marginBottom:6 }}>休業日</div>
-                {blocked.length === 0
-                  ? <div style={{ fontSize:12, color:'#bbb', marginBottom:8 }}>設定なし</div>
-                  : blocked.map((b,i) => (
-                    <div key={b.date} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom: i<blocked.length-1?'1px solid #f5f5f5':'none', marginBottom: i===blocked.length-1?8:0 }}>
-                      <span style={{ fontSize:13 }}>{fmtDate(b.date)}{b.reason && <span style={{ color:'#aaa', fontSize:12 }}>　{b.reason}</span>}</span>
-                      <button onClick={() => removeClosedDay(b.date)} style={{ ...btnRed, padding:'3px 10px', fontSize:11 }}>解除</button>
-                    </div>
-                  ))
-                }
-                <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
-                  <input type="date" value={newClosedDate} onChange={e=>setNewClosedDate(e.target.value)} style={{ ...iStyle, width:'auto', padding:'7px 10px', fontSize:13 }} />
-                  <input type="text" value={newClosedRsn} placeholder="理由（任意）" onChange={e=>setNewClosedRsn(e.target.value)} style={{ ...iStyle, flex:1, minWidth:100, padding:'7px 10px', fontSize:13 }} />
-                  <button onClick={addClosedDay} style={{ ...btnRed, background:'#e53935' }}>追加</button>
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize:12, fontWeight:'bold', color:'#e65100', marginBottom:6 }}>受付停止枠</div>
-                {seatBlocks.length === 0
-                  ? <div style={{ fontSize:12, color:'#bbb', marginBottom:8 }}>設定なし</div>
-                  : seatBlocks.map((sb,i) => (
-                    <div key={sb.date} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom: i<seatBlocks.length-1?'1px solid #f5f5f5':'none', marginBottom: i===seatBlocks.length-1?8:0 }}>
-                      <span style={{ fontSize:13 }}>{fmtDate(sb.date)} <span style={{ color:'#e65100', fontWeight:'bold' }}>{sb.blockedSeats}席停止</span>{sb.reason && <span style={{ color:'#aaa', fontSize:12 }}>　{sb.reason}</span>}</span>
-                      <button onClick={() => removeSeatBlock(sb.date)} style={{ ...btnRed, padding:'3px 10px', fontSize:11 }}>解除</button>
-                    </div>
-                  ))
-                }
-                <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
-                  <input type="date" value={newSeatDate} onChange={e=>setNewSeatDate(e.target.value)} style={{ ...iStyle, width:'auto', padding:'7px 10px', fontSize:13 }} />
-                  <select value={newSeatSeats} onChange={e=>setNewSeatSeats(parseInt(e.target.value)||1)} style={{ ...iStyle, width:80, padding:'7px 8px', fontSize:13 }}>
-                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}席</option>)}
-                  </select>
-                  <input type="text" value={newSeatRsn} placeholder="理由（任意）" onChange={e=>setNewSeatRsn(e.target.value)} style={{ ...iStyle, flex:1, minWidth:80, padding:'7px 10px', fontSize:13 }} />
-                  <button onClick={addSeatBlock} style={btnGreen}>追加</button>
-                </div>
-              </div>
-            </div>
           </>
         )}
 
@@ -961,36 +862,31 @@ export default function Admin() {
                   <div style={{ display:'flex', flexWrap:'wrap', gap:20, alignItems:'center' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                       <label style={{ fontSize:13, color:'#555', whiteSpace:'nowrap' }}>最大席数</label>
-                      <input type="number" min={1} max={20} value={settings.maxSeats}
+                      <select value={settings.maxSeats}
                         onChange={e => setSettings(s=>({...s, maxSeats:parseInt(e.target.value)||8}))}
-                        style={{ ...iStyle, width:80 }} />
-                      <span style={{ fontSize:12, color:'#aaa' }}>名</span>
+                        style={{ ...iStyle, width:90 }}>
+                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}名</option>)}
+                      </select>
                     </div>
                   </div>
                 </div>
 
                 {/* 受付可能時間帯 */}
                 <div style={{ background:'#fff', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
-                    <h2 style={{ fontSize:15, fontWeight:'bold' }}>受付可能時間帯</h2>
-                    {(settings.timeRanges||[]).length < 2 && (
-                      <button onClick={() => setSettings(s=>({...s, timeRanges:[...(s.timeRanges||[]), { start:'11:30', end:'14:00', label:'ランチ' }]}))}
-                        style={{ ...btnGray, fontSize:12 }}>＋ 追加</button>
-                    )}
-                  </div>
-                  {(settings.timeRanges||[]).map((tr,i) => (
-                    <div key={i} style={{ display:'flex', gap:10, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
-                      <input type="text" value={tr.label} placeholder="ディナー" onChange={e=>setSettings(s=>{ const a=[...s.timeRanges]; a[i]={...a[i],label:e.target.value}; return {...s,timeRanges:a} })}
-                        style={{ ...iStyle, width:90 }} />
-                      <input type="time" value={tr.start} onChange={e=>setSettings(s=>{ const a=[...s.timeRanges]; a[i]={...a[i],start:e.target.value}; return {...s,timeRanges:a} })}
-                        style={{ ...iStyle, width:110 }} />
-                      <span style={{ fontSize:13, color:'#888' }}>〜</span>
-                      <input type="time" value={tr.end} onChange={e=>setSettings(s=>{ const a=[...s.timeRanges]; a[i]={...a[i],end:e.target.value}; return {...s,timeRanges:a} })}
-                        style={{ ...iStyle, width:110 }} />
-                      <button onClick={() => setSettings(s=>({...s, timeRanges:s.timeRanges.filter((_,j)=>j!==i)}))} style={btnRed}>削除</button>
-                    </div>
-                  ))}
-                  {(settings.timeRanges||[]).length === 0 && <div style={{ fontSize:12, color:'#bbb' }}>時間帯が設定されていません</div>}
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14 }}>受付可能時間帯</h2>
+                  {defTimeRanges.map((def, i) => {
+                    const tr = (settings.timeRanges||[])[i] || def
+                    return (
+                      <div key={def.type} style={{ display:'flex', gap:10, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
+                        <span style={{ fontSize:13, fontWeight:'bold', color:'#555', width:52, flexShrink:0 }}>{def.label}</span>
+                        <input type="time" value={tr.start} onChange={e=>setSettings(s=>{ const a=[...(s.timeRanges||defTimeRanges)]; a[i]={...a[i],start:e.target.value}; return {...s,timeRanges:a} })}
+                          style={{ ...iStyle, width:110 }} />
+                        <span style={{ fontSize:13, color:'#888' }}>〜</span>
+                        <input type="time" value={tr.end} onChange={e=>setSettings(s=>{ const a=[...(s.timeRanges||defTimeRanges)]; a[i]={...a[i],end:e.target.value}; return {...s,timeRanges:a} })}
+                          style={{ ...iStyle, width:110 }} />
+                      </div>
+                    )
+                  })}
                 </div>
 
                 {/* 受付締め切りルール */}
@@ -1044,6 +940,13 @@ export default function Admin() {
                             <Field label="価格（税込・円）"><input type="number" value={editCourse.price} style={iStyle} onChange={e=>setEditCourse(c=>({...c,price:parseInt(e.target.value)||0}))} /></Field>
                             <Field label="説明文" span><input type="text" value={editCourse.description} style={iStyle} onChange={e=>setEditCourse(c=>({...c,description:e.target.value}))} /></Field>
                             <Field label="所要時間（分）"><input type="number" value={editCourse.duration} style={iStyle} onChange={e=>setEditCourse(c=>({...c,duration:parseInt(e.target.value)||0}))} /></Field>
+                            <Field label="食事タイプ">
+                              <select value={editCourse.mealType||'dinner'} style={iStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
+                                <option value="lunch">ランチ</option>
+                                <option value="dinner">ディナー</option>
+                                <option value="both">共通</option>
+                              </select>
+                            </Field>
                             <div style={{ gridColumn:'1/-1', display:'flex', gap:8, marginTop:4 }}>
                               <button onClick={() => { const cs=[...settings.courses]; cs[idx]={...editCourse}; setSettings(s=>({...s,courses:cs})); setEditCourseIdx(-1) }}
                                 style={{ padding:'8px 18px', background:'#06c755', color:'#fff', border:'none', borderRadius:8, fontSize:13, cursor:'pointer' }}>保存</button>
@@ -1053,7 +956,13 @@ export default function Admin() {
                         ) : (
                           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12 }}>
                             <div>
-                              <div style={{ fontSize:14, fontWeight:'bold' }}>{c.name}</div>
+                              <div style={{ fontSize:14, fontWeight:'bold' }}>{c.name}
+                                <span style={{ marginLeft:8, fontSize:11, padding:'1px 8px', borderRadius:10, fontWeight:'normal',
+                                  background: c.mealType==='lunch'?'#fff3e0':c.mealType==='both'?'#f3e5f5':'#e3f2fd',
+                                  color: c.mealType==='lunch'?'#e65100':c.mealType==='both'?'#6a1b9a':'#1565c0' }}>
+                                  {c.mealType==='lunch'?'ランチ':c.mealType==='both'?'共通':'ディナー'}
+                                </span>
+                              </div>
                               <div style={{ fontSize:13, color:'#06c755', marginTop:2 }}>¥{Number(c.price).toLocaleString()}（税込）</div>
                               {c.description && <div style={{ fontSize:12, color:'#888', marginTop:2 }}>{c.description}</div>}
                               <div style={{ fontSize:12, color:'#aaa', marginTop:2 }}>約{c.duration}分</div>
@@ -1076,11 +985,18 @@ export default function Admin() {
                         <Field label="価格（税込・円）"><input type="number" value={newCourse.price} placeholder="11000" style={iStyle} onChange={e=>setNewCourse(c=>({...c,price:e.target.value}))} /></Field>
                         <Field label="説明文" span><input type="text" value={newCourse.description} placeholder="旬の貝と野菜をふんだんに使ったコースメニュー" style={iStyle} onChange={e=>setNewCourse(c=>({...c,description:e.target.value}))} /></Field>
                         <Field label="所要時間（分）"><input type="number" value={newCourse.duration} placeholder="150" style={iStyle} onChange={e=>setNewCourse(c=>({...c,duration:e.target.value}))} /></Field>
+                        <Field label="食事タイプ">
+                          <select value={newCourse.mealType||'dinner'} style={iStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
+                            <option value="lunch">ランチ</option>
+                            <option value="dinner">ディナー</option>
+                            <option value="both">共通</option>
+                          </select>
+                        </Field>
                         <div style={{ gridColumn:'1/-1', display:'flex', gap:8, marginTop:4 }}>
                           <button onClick={() => {
                             if (!newCourse.name) return
-                            setSettings(s=>({...s, courses:[...s.courses,{name:newCourse.name,price:parseInt(newCourse.price)||0,description:newCourse.description,duration:parseInt(newCourse.duration)||150}]}))
-                            setNewCourse({name:'',price:'',description:'',duration:150})
+                            setSettings(s=>({...s, courses:[...s.courses,{name:newCourse.name,price:parseInt(newCourse.price)||0,description:newCourse.description,duration:parseInt(newCourse.duration)||150,mealType:newCourse.mealType||'dinner'}]}))
+                            setNewCourse({name:'',price:'',description:'',duration:150,mealType:'dinner'})
                             setShowAddCourse(false)
                           }} style={{ padding:'8px 18px', background:'#06c755', color:'#fff', border:'none', borderRadius:8, fontSize:13, cursor:'pointer' }}>追加する</button>
                           <button onClick={() => setShowAddCourse(false)} style={btnGray}>キャンセル</button>
@@ -1107,13 +1023,13 @@ export default function Admin() {
 
       {/* Modals */}
       {editRes && (
-        <EditModal res={editRes} pwRef={pwRef}
+        <EditModal res={editRes}
           onClose={() => setEditRes(null)}
           onSaved={() => { setEditRes(null); loadReservations() }}
           showToast={showToast} />
       )}
       {showAddModal && (
-        <AddModal initialDate={addInitDate} pwRef={pwRef}
+        <AddModal initialDate={addInitDate}
           onClose={() => setShowAddModal(false)}
           onAdded={() => { setShowAddModal(false); loadReservations() }}
           showToast={showToast} />

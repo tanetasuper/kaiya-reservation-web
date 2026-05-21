@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import Head from 'next/head'
 import Script from 'next/script'
 import { api } from '../lib/api'
@@ -65,14 +65,102 @@ function computeDateMin(now, hols) {
   return toYMD(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14))
 }
 
-function TimeGrid({ value, onChange }) {
+function generateSlots(tr) {
+  const slots = []
+  const [sh, sm] = tr.start.split(':').map(Number)
+  const [eh, em] = tr.end.split(':').map(Number)
+  let cur = sh * 60 + sm
+  const end = eh * 60 + em
+  while (cur < end) {
+    slots.push(`${String(Math.floor(cur/60)).padStart(2,'0')}:${String(cur%60).padStart(2,'0')}`)
+    cur += 30
+  }
+  return slots
+}
+
+function TimeGrid({ value, onChange, slots }) {
+  const list = slots && slots.length > 0 ? slots : TIME_SLOTS
   return (
     <div className="t-grid">
-      {TIME_SLOTS.map((s) => (
+      {list.map((s) => (
         <button key={s} className={`t-btn${value === s ? ' sel' : ''}`} onClick={() => onChange(s)}>
           {s}
         </button>
       ))}
+    </div>
+  )
+}
+
+const CAL_WEEK = ['日','月','火','水','木','金','土']
+function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected, onSelect, onPrev, onNext, loading }) {
+  const todayYMD = toYMD(new Date())
+  const firstDay = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month+1, 0).getDate()
+
+  const cells = []
+  for (let i = 0; i < firstDay; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ymd = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+    const info = monthAvail[ymd.replace(/-/g,'/')] || {}
+    const isPast = ymd < dateMin
+    const isFuture = dateMax && ymd > dateMax
+    const isUnavailable = info.status === 'blocked' || info.status === 'full'
+    const isDisabled = isPast || isFuture || isUnavailable
+    cells.push({ d, ymd, info, isDisabled, isSelected: ymd === selected, isToday: ymd === todayYMD })
+  }
+
+  function mark(info, isDisabled) {
+    if (isDisabled) return { text: info.status === 'blocked' || info.status === 'full' ? '✕' : '', color:'#ddd' }
+    if (info.status === 'few')  return { text:'△', color:'#e65100' }
+    if (info.status === 'open') return { text:'○', color:'#2e7d32' }
+    return { text:'', color:'transparent' }
+  }
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+        <button onClick={onPrev} style={{ padding:'6px 14px', background:'#f0f0f0', border:'none', borderRadius:8, fontSize:15, cursor:'pointer', color:'#555' }}>←</button>
+        <span style={{ fontWeight:'bold', fontSize:15 }}>{year}年{month+1}月</span>
+        <button onClick={onNext} style={{ padding:'6px 14px', background:'#f0f0f0', border:'none', borderRadius:8, fontSize:15, cursor:'pointer', color:'#555' }}>→</button>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', marginBottom:4 }}>
+        {CAL_WEEK.map((w,i) => (
+          <div key={w} style={{ textAlign:'center', fontSize:11, fontWeight:'bold', padding:'3px 0',
+            color: i===0?'#e53935':i===6?'#1565c0':'#888' }}>{w}</div>
+        ))}
+      </div>
+      {loading ? (
+        <div style={{ textAlign:'center', padding:'20px 0', color:'#aaa', fontSize:13 }}>読み込み中...</div>
+      ) : (
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2 }}>
+          {cells.map((cell, i) => {
+            if (cell === null) return <div key={`e${i}`}/>
+            const mk = mark(cell.info, cell.isDisabled)
+            const colIdx = i % 7
+            return (
+              <button key={cell.ymd} disabled={cell.isDisabled}
+                onClick={() => onSelect(cell.isSelected ? '' : cell.ymd)}
+                style={{
+                  padding:'3px 2px', textAlign:'center', fontSize:12,
+                  border: cell.isSelected ? '2px solid #06c755' : cell.isToday ? '2px solid #aaa' : '1px solid transparent',
+                  borderRadius:6,
+                  background: cell.isSelected ? '#f0fff4' : 'transparent',
+                  color: cell.isDisabled ? '#ccc' : colIdx===0 ? '#e53935' : colIdx===6 ? '#1565c0' : '#111',
+                  cursor: cell.isDisabled ? 'default' : 'pointer',
+                  minHeight:42, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                }}>
+                <span style={{ fontWeight: cell.isToday?'bold':'normal', lineHeight:1.2 }}>{cell.d}</span>
+                <span style={{ fontSize:10, color:mk.color, lineHeight:1 }}>{mk.text}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+      <div style={{ display:'flex', gap:14, marginTop:8, fontSize:11, flexWrap:'wrap' }}>
+        <span style={{ color:'#2e7d32' }}>○ 空きあり</span>
+        <span style={{ color:'#e65100' }}>△ 残席わずか</span>
+        <span style={{ color:'#e53935' }}>✕ 満席/休業</span>
+      </div>
     </div>
   )
 }
@@ -92,8 +180,18 @@ export default function Home() {
   const [availLoading, setAvailLoading] = useState(false)
 
   // コース設定（管理画面から取得）
-  const [settingsCourses, setSettingsCourses] = useState([{ name:'季節の貝フルコース', price:11000, description:'旬の貝と野菜をふんだんに使ったコースメニュー', duration:150 }])
+  const [settingsCourses, setSettingsCourses] = useState([{ name:'季節の貝フルコース', price:11000, description:'旬の貝と野菜をふんだんに使ったコースメニュー', duration:150, mealType:'dinner' }])
   const [selCourse, setSelCourse] = useState(0)
+  const [settingsTimeRanges, setSettingsTimeRanges] = useState([
+    { type:'lunch', label:'ランチ', start:'11:30', end:'14:00' },
+    { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' },
+  ])
+
+  // 月別カレンダー
+  const [calYear,          setCalYear]          = useState(new Date().getFullYear())
+  const [calMonth,         setCalMonth]         = useState(new Date().getMonth())
+  const [monthAvail,       setMonthAvail]       = useState({})
+  const [monthAvailLoading,setMonthAvailLoading]= useState(false)
 
   // 予約フォーム
   const [selDate, setSelDate] = useState('')
@@ -129,6 +227,28 @@ export default function Home() {
   const isKasshiki = selGuest === 'kasshiki' || selGuest === 'konsult'
   const effectiveGuests = isKasshiki ? selCount : selGuest
   const showTimeCard = selDate && selGuest && (!isKasshiki || selCount)
+
+  // ===== 月別空席取得 =====
+  async function fetchMonthAvail(year, month) {
+    setMonthAvailLoading(true)
+    try {
+      const r = await api.getMonthAvailability(year, month + 1)
+      setMonthAvail(r.dates || {})
+    } catch { setMonthAvail({}) }
+    setMonthAvailLoading(false)
+  }
+
+  // ===== コース × 時間帯 → 選択可能スロット =====
+  const courseTimeSlots = useMemo(() => {
+    const mealType = settingsCourses[selCourse]?.mealType || 'dinner'
+    const ranges = settingsTimeRanges.filter(tr =>
+      mealType === 'both' || tr.type === mealType || tr.type === 'both'
+    )
+    if (!ranges.length) return TIME_SLOTS
+    const all = []
+    ranges.forEach(tr => generateSlots(tr).forEach(s => { if (!all.includes(s)) all.push(s) }))
+    return all.sort()
+  }, [settingsCourses, selCourse, settingsTimeRanges])
 
   // ===== 締め切り計算 =====
   function getDeadline(dateStr) {
@@ -304,12 +424,11 @@ export default function Home() {
     const mx = new Date(now)
     mx.setFullYear(mx.getFullYear() + 1)
     setDateMax(toYMD(mx))
-    // コース設定を取得
+    // コース・時間帯設定を取得
     api.getSettings().then(r => {
-      if (r.success && r.courses && r.courses.length > 0) {
-        setSettingsCourses(r.courses)
-        setSelCourse(0)
-      }
+      if (!r.success) return
+      if (r.courses && r.courses.length > 0) { setSettingsCourses(r.courses); setSelCourse(0) }
+      if (r.timeRanges && r.timeRanges.length > 0) setSettingsTimeRanges(r.timeRanges)
     }).catch(() => {})
   }, [])
 
@@ -323,6 +442,14 @@ export default function Home() {
   useEffect(() => {
     window.scrollTo(0, 0)
   }, [screen])
+
+  useEffect(() => {
+    fetchMonthAvail(calYear, calMonth)
+  }, [calYear, calMonth])
+
+  useEffect(() => {
+    setSelTime('')
+  }, [selCourse])
 
   // ===== バリデーション =====
   function goConfirm() {
@@ -510,16 +637,17 @@ export default function Home() {
           <div className="card">
             <div className="card-lbl">📅　ご来店日</div>
             <div className="card-body">
-              <input
-                type="date"
-                value={selDate}
-                min={dateMin}
-                max={dateMax}
-                onChange={(e) => onDateChange(e.target.value)}
+              <CustomerCalendar
+                year={calYear} month={calMonth}
+                monthAvail={monthAvail}
+                dateMin={dateMin} dateMax={dateMax}
+                selected={selDate}
+                onSelect={(d) => onDateChange(d)}
+                onPrev={() => { if (calMonth === 0) { setCalYear(y=>y-1); setCalMonth(11) } else setCalMonth(m=>m-1) }}
+                onNext={() => { if (calMonth === 11) { setCalYear(y=>y+1); setCalMonth(0) } else setCalMonth(m=>m+1) }}
+                loading={monthAvailLoading}
               />
-              <p className="hint">
-                {selDate ? deadlineLabel(selDate) : '※ 来店日2日前（土日は木曜・祝日は3日前）22:00まで受付'}
-              </p>
+              {selDate && <p className="hint" style={{ marginTop:10 }}>{deadlineLabel(selDate)}</p>}
             </div>
           </div>
 
@@ -628,8 +756,12 @@ export default function Home() {
             <div className="card">
               <div className="card-lbl">⏰　来店時間</div>
               <div className="card-body">
-                <TimeGrid value={selTime} onChange={(s) => { setSelTime(s); setInputErr('') }} />
-                <p className="hint">受付時間 17:00〜21:00（コースは約2時間30分）</p>
+                <TimeGrid value={selTime} onChange={(s) => { setSelTime(s); setInputErr('') }} slots={courseTimeSlots} />
+                <p className="hint">
+                  {courseTimeSlots.length > 0
+                    ? `受付時間 ${courseTimeSlots[0]}〜${courseTimeSlots[courseTimeSlots.length-1]}（コースは約${Math.floor(STAY_MIN/60)}時間${STAY_MIN%60>0?STAY_MIN%60+'分':''}）`
+                    : ''}
+                </p>
               </div>
             </div>
           )}
