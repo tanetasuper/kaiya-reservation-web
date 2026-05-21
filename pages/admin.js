@@ -380,10 +380,10 @@ export default function Admin() {
   }, [calYear, calMonth])
 
   useEffect(() => {
-    const block = selectedDate ? seatBlockMap[selectedDate] : null
+    const block = selectedDate ? seatBlocks.find(sb => sb.date === selectedDate) || null : null
     if (block) setSeatInput({ seats: block.blockedSeats, reason: block.reason || '' })
     else { setSeatInput({ seats:4, reason:'' }); setShowSeatForm(false) }
-  }, [selectedDate, seatBlockMap])
+  }, [selectedDate, seatBlocks])
 
   // ── Data loaders ────────────────────────────────────────────────
   async function loadReservations() {
