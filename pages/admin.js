@@ -3,6 +3,19 @@ import Head from 'next/head'
 import { api } from '../lib/api'
 
 const TIME_SLOTS = ['17:00','17:30','18:00','18:30','19:00','19:30','20:00','20:30','21:00']
+
+function generateSlots(tr) {
+  const slots = []
+  const [sh, sm] = tr.start.split(':').map(Number)
+  const [eh, em] = tr.end.split(':').map(Number)
+  let cur = sh * 60 + sm
+  const end = eh * 60 + em
+  while (cur < end) {
+    slots.push(`${String(Math.floor(cur/60)).padStart(2,'0')}:${String(cur%60).padStart(2,'0')}`)
+    cur += 30
+  }
+  return slots
+}
 const STATUSES   = ['確定','キャンセル','カレンダー削除']
 const SOURCES    = ['電話','食べログ','LINE','ウォークイン','その他']
 const GUESTS     = ['1','2','3','4','5','6','7','8']
@@ -141,7 +154,7 @@ function CalNav({ year, month, onPrev, onNext }) {
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────
-function EditModal({ res, onClose, onSaved, showToast }) {
+function EditModal({ res, onClose, onSaved, showToast, timeSlots }) {
   const [data, setData] = useState({
     name:   res.name,
     phone:  res.phone,
@@ -181,7 +194,7 @@ function EditModal({ res, onClose, onSaved, showToast }) {
           <Field label="来店日"> <input type="date"  value={data.date}   style={iStyle} onChange={set('date')}   /></Field>
           <Field label="時間">
             <select value={data.time} style={iStyle} onChange={set('time')}>
-              {TIME_SLOTS.map(s => <option key={s}>{s}</option>)}
+              {(timeSlots || TIME_SLOTS).map(s => <option key={s}>{s}</option>)}
             </select>
           </Field>
           <Field label="人数">
@@ -217,7 +230,7 @@ function EditModal({ res, onClose, onSaved, showToast }) {
 }
 
 // ── Add Modal ─────────────────────────────────────────────────────
-function AddModal({ initialDate, onClose, onAdded, showToast }) {
+function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots }) {
   const [data, setData] = useState({
     date: initialDate ? initialDate.replace(/\//g,'-') : '',
     time:'', name:'', phone:'', guests:'2',
@@ -257,7 +270,7 @@ function AddModal({ initialDate, onClose, onAdded, showToast }) {
           <Field label="時間 *">
             <select value={data.time} style={iStyle} onChange={set('time')}>
               <option value="">-- 選択 --</option>
-              {TIME_SLOTS.map(s => <option key={s}>{s}</option>)}
+              {(timeSlots || TIME_SLOTS).map(s => <option key={s}>{s}</option>)}
             </select>
           </Field>
           <Field label="お名前 *">   <input type="text" value={data.name}  placeholder="山田 太郎"       style={iStyle} onChange={set('name')}  /></Field>
@@ -354,12 +367,17 @@ export default function Admin() {
 
   // ── Auto-load on mount ──────────────────────────────────────────
   useEffect(() => {
-    loadReservations()
     loadBlocked()
     loadSeatBlocks()
     loadNotifications()
     loadSettings()
   }, [])
+
+  useEffect(() => {
+    setSelectedDate(null)
+    setShowSeatForm(false)
+    loadReservations()
+  }, [calYear, calMonth])
 
   useEffect(() => {
     const block = selectedDate ? seatBlockMap[selectedDate] : null
@@ -370,8 +388,15 @@ export default function Admin() {
   // ── Data loaders ────────────────────────────────────────────────
   async function loadReservations() {
     setResLoading(true)
+    const y = calYear, m = calMonth
+    const pad = n => String(n).padStart(2,'0')
+    const lastD = new Date(y, m+1, 0).getDate()
+    const filter = {
+      dateFrom: `${y}/${pad(m+1)}/01`,
+      dateTo:   `${y}/${pad(m+1)}/${pad(lastD)}`,
+    }
     try {
-      const r = await api.adminGetReservations({})
+      const r = await api.adminGetReservations(filter)
       setReservations(r.list || [])
     } catch { setReservations([]) }
     setResLoading(false)
@@ -514,6 +539,14 @@ export default function Admin() {
   }
 
   // ── Computed ─────────────────────────────────────────────────────
+  const adminTimeSlots = useMemo(() => {
+    const all = []
+    ;(settings.timeRanges || defTimeRanges).forEach(tr =>
+      generateSlots(tr).forEach(s => { if (!all.includes(s)) all.push(s) })
+    )
+    return all.length ? all.sort() : TIME_SLOTS
+  }, [settings.timeRanges])
+
   const seatBlockMap = useMemo(() => {
     const m = {}
     seatBlocks.forEach(sb => { m[sb.date] = sb })
@@ -1026,13 +1059,15 @@ export default function Admin() {
         <EditModal res={editRes}
           onClose={() => setEditRes(null)}
           onSaved={() => { setEditRes(null); loadReservations() }}
-          showToast={showToast} />
+          showToast={showToast}
+          timeSlots={adminTimeSlots} />
       )}
       {showAddModal && (
         <AddModal initialDate={addInitDate}
           onClose={() => setShowAddModal(false)}
           onAdded={() => { setShowAddModal(false); loadReservations() }}
-          showToast={showToast} />
+          showToast={showToast}
+          timeSlots={adminTimeSlots} />
       )}
 
       <Toast msg={toast.msg} type={toast.type} />

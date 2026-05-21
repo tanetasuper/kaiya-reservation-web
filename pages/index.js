@@ -238,7 +238,8 @@ export default function Home() {
     setMonthAvailLoading(false)
   }
 
-  // ===== コース × 時間帯 → 選択可能スロット =====
+  // ===== コース × 時間帯 → 選択可能スロット / 所要時間 =====
+  const selStayMin = settingsCourses[selCourse]?.duration || STAY_MIN
   const courseTimeSlots = useMemo(() => {
     const mealType = settingsCourses[selCourse]?.mealType || 'dinner'
     const ranges = settingsTimeRanges.filter(tr =>
@@ -478,7 +479,7 @@ export default function Home() {
     const d = parseDate(selDate)
     const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
     const isKonsult = selGuest === 'konsult'
-    const baseDetail = `${fmtDate(selDate)}　${selTime}〜${addMin(selTime, STAY_MIN)}\n${effectiveGuests}名様${isKasshiki ? '（貸切プラン）' : ''}`
+    const baseDetail = `${fmtDate(selDate)}　${selTime}〜${addMin(selTime, selStayMin)}\n${effectiveGuests}名様${isKasshiki ? '（貸切プラン）' : ''}`
     // Optimistic UI：先に done 画面へ遷移し、API はバックグラウンドで送信
     setDone({ detail: baseDetail, id: '', pending: true, error: '', backScreen: 'confirm', title: 'ご予約を承りました' })
     setScreen('done')
@@ -759,7 +760,7 @@ export default function Home() {
                 <TimeGrid value={selTime} onChange={(s) => { setSelTime(s); setInputErr('') }} slots={courseTimeSlots} />
                 <p className="hint">
                   {courseTimeSlots.length > 0
-                    ? `受付時間 ${courseTimeSlots[0]}〜${courseTimeSlots[courseTimeSlots.length-1]}（コースは約${Math.floor(STAY_MIN/60)}時間${STAY_MIN%60>0?STAY_MIN%60+'分':''}）`
+                    ? `受付時間 ${courseTimeSlots[0]}〜${courseTimeSlots[courseTimeSlots.length-1]}（コースは約${Math.floor(selStayMin/60)}時間${selStayMin%60>0?selStayMin%60+'分':''}）`
                     : ''}
                 </p>
               </div>
@@ -847,7 +848,7 @@ export default function Home() {
             </div>
             <div className="cf-row">
               <div className="cf-lbl">時間</div>
-              <div className="cf-val">{selTime}〜{addMin(selTime, STAY_MIN)}（目安）</div>
+              <div className="cf-val">{selTime}〜{addMin(selTime, selStayMin)}（目安）</div>
             </div>
             <div className="cf-row">
               <div className="cf-lbl">人数</div>
