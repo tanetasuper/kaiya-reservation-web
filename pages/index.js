@@ -186,6 +186,12 @@ export default function Home() {
     { type:'lunch', label:'ランチ', start:'11:30', end:'14:00' },
     { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' },
   ])
+  const defCutoff = { daysBefore:2, time:'22:00' }
+  const [settingsCutoffRules, setSettingsCutoffRules] = useState({
+    '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff,
+    '3':defCutoff, '4':defCutoff, '5':defCutoff,
+    '6':{ daysBefore:2, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' },
+  })
 
   // 月別カレンダー
   const [calYear,          setCalYear]          = useState(new Date().getFullYear())
@@ -239,9 +245,10 @@ export default function Home() {
   }
 
   // ===== コース × 時間帯 → 選択可能スロット / 所要時間 =====
-  const selStayMin = settingsCourses[selCourse]?.duration || STAY_MIN
+  const visibleCourses = useMemo(() => settingsCourses.filter(c => !c.discontinued), [settingsCourses])
+  const selStayMin = visibleCourses[selCourse]?.duration || STAY_MIN
   const courseTimeSlots = useMemo(() => {
-    const mealType = settingsCourses[selCourse]?.mealType || 'dinner'
+    const mealType = visibleCourses[selCourse]?.mealType || 'dinner'
     const ranges = settingsTimeRanges.filter(tr =>
       mealType === 'both' || tr.type === mealType || tr.type === 'both'
     )
@@ -249,34 +256,21 @@ export default function Home() {
     const all = []
     ranges.forEach(tr => generateSlots(tr).forEach(s => { if (!all.includes(s)) all.push(s) }))
     return all.sort()
-  }, [settingsCourses, selCourse, settingsTimeRanges])
+  }, [visibleCourses, selCourse, settingsTimeRanges])
 
   // ===== 締め切り計算 =====
   function getDeadline(dateStr) {
     if (!dateStr) return null
     const d = parseDate(dateStr)
-    const dow = d.getDay()
     const ymd = String(dateStr).replace(/-/g, '/')
     const isHol = !!holidays[ymd]
-    const isSatSun = dow === 0 || dow === 6
-
-    if (isHol) {
-      const dl = new Date(d)
-      dl.setDate(dl.getDate() - 3)
-      dl.setHours(22, 0, 0, 0)
-      return dl
-    } else if (isSatSun) {
-      // その週の木曜22:00（日=0: -3days, 土=6: +5days → 土の前の木曜は -2days）
-      const thu = new Date(d)
-      thu.setDate(d.getDate() - ((dow + 3) % 7))
-      thu.setHours(22, 0, 0, 0)
-      return thu
-    } else {
-      const dl = new Date(d)
-      dl.setDate(dl.getDate() - 2)
-      dl.setHours(22, 0, 0, 0)
-      return dl
-    }
+    const key = isHol ? 'holiday' : String(d.getDay())
+    const rule = settingsCutoffRules[key] || { daysBefore:2, time:'22:00' }
+    const [h, m] = rule.time.split(':').map(Number)
+    const dl = new Date(d)
+    dl.setDate(dl.getDate() - rule.daysBefore)
+    dl.setHours(h, m, 0, 0)
+    return dl
   }
 
   function deadlinePassed(dateStr) {
@@ -290,24 +284,22 @@ export default function Home() {
     const dl = getDeadline(dateStr)
     if (!dl) return ''
     const d = parseDate(dateStr)
-    const dow = d.getDay()
     const ymd = String(dateStr).replace(/-/g, '/')
     const isHol = !!holidays[ymd]
-    const isSatSun = dow === 0 || dow === 6
+    const dow = d.getDay()
+    const key = isHol ? 'holiday' : String(dow)
+    const rule = settingsCutoffRules[key] || { daysBefore:2, time:'22:00' }
     const mo = dl.getMonth() + 1
     const da = dl.getDate()
-    if (isHol) return `※ 祝日のため${mo}/${da}（3日前）22:00まで受付`
-    if (isSatSun) return `※ 土日のため${mo}/${da}（木曜）22:00まで受付`
-    return `※ 来店日の2日前（${mo}/${da}）22:00まで受付`
+    if (isHol) return `※ 祝日のため${mo}/${da}（${rule.daysBefore}日前）${rule.time}まで受付`
+    if (dow === 0 || dow === 6) return `※ 土日のため${mo}/${da}（${rule.daysBefore}日前）${rule.time}まで受付`
+    return `※ 来店日の${rule.daysBefore}日前（${mo}/${da}）${rule.time}まで受付`
   }
 
-  // 変更・キャンセル可否：来店2日前22:00 JST まで（UTC基準で安全に計算）
   function isChangeCancelable(dateStr) {
-    if (!dateStr) return false
-    const norm = String(dateStr).replace(/\//g, '-')
-    const reservAt22JST = new Date(norm + 'T13:00:00Z') // 22:00 JST = 13:00 UTC
-    const deadline = new Date(reservAt22JST.getTime() - 2 * 24 * 60 * 60 * 1000)
-    return new Date() <= deadline
+    const dl = getDeadline(dateStr)
+    if (!dl) return false
+    return new Date() <= dl
   }
 
   // ===== 人数ボタンの状態 =====
@@ -430,6 +422,7 @@ export default function Home() {
       if (!r.success) return
       if (r.courses && r.courses.length > 0) { setSettingsCourses(r.courses); setSelCourse(0) }
       if (r.timeRanges && r.timeRanges.length > 0) setSettingsTimeRanges(r.timeRanges)
+      if (r.cutoffRules) setSettingsCutoffRules(r.cutoffRules)
     }).catch(() => {})
   }, [])
 
@@ -487,12 +480,13 @@ export default function Home() {
       const r = await api.createReservation({
         lineUserId: profile?.userId || 'unknown',
         displayName: profile?.displayName || '',
+        pictureUrl: profile?.pictureUrl || '',
         name: String(name).trim(),
         phone: String(phone).trim(),
         date: dateStr,
         time: selTime,
         guests: effectiveGuests,
-        course: settingsCourses[selCourse]?.name || '季節の貝フルコース',
+        course: visibleCourses[selCourse]?.name || '季節の貝フルコース',
         isKasshiki: isKasshiki && !isKonsult,
         isKonsult,
         notes: String(notes).trim(),
@@ -513,6 +507,7 @@ export default function Home() {
 
   // ===== 予約一覧 =====
   async function openMyRes() {
+    await ensureHolidays()
     setMyRes([])
     setMyResLoading(true)
     setCancelId(null)
@@ -616,11 +611,11 @@ export default function Home() {
           <div className="card">
             <div className="card-lbl">🍽　コース</div>
             <div className="card-body">
-              {settingsCourses.map((c, i) => (
+              {visibleCourses.map((c, i) => (
                 <div key={i}
-                  className={`course-item${settingsCourses.length > 1 ? (selCourse === i ? ' sel' : '') : ''}`}
-                  onClick={() => settingsCourses.length > 1 && setSelCourse(i)}
-                  style={settingsCourses.length > 1 ? { cursor:'pointer', border: selCourse===i ? '2px solid #06c755' : '2px solid #e0e0e0', borderRadius:10, padding:'10px 12px', marginBottom: i < settingsCourses.length-1 ? 8 : 0 } : {}}>
+                  className={`course-item${visibleCourses.length > 1 ? (selCourse === i ? ' sel' : '') : ''}`}
+                  onClick={() => visibleCourses.length > 1 && setSelCourse(i)}
+                  style={visibleCourses.length > 1 ? { cursor:'pointer', border: selCourse===i ? '2px solid #06c755' : '2px solid #e0e0e0', borderRadius:10, padding:'10px 12px', marginBottom: i < visibleCourses.length-1 ? 8 : 0 } : {}}>
                   <div className="course-row">
                     <div className="course-nm">{c.name}</div>
                     <div className="course-pr">¥{Number(c.price).toLocaleString()}<small>（税込）</small></div>
@@ -835,10 +830,10 @@ export default function Home() {
             <div className="cf-row">
               <div className="cf-lbl">コース</div>
               <div className="cf-val">
-                {settingsCourses[selCourse]?.name || '季節の貝フルコース'}
+                {visibleCourses[selCourse]?.name || '季節の貝フルコース'}
                 <br />
                 <span style={{ fontSize: 12, fontWeight: 'normal', color: 'var(--sub)' }}>
-                  ¥{Number(settingsCourses[selCourse]?.price || 11000).toLocaleString()}（税込）/ お一人様　・　約{Math.floor((settingsCourses[selCourse]?.duration||150)/60)}時間{(settingsCourses[selCourse]?.duration||150)%60 > 0 ? (settingsCourses[selCourse]?.duration||150)%60+'分' : ''}
+                  ¥{Number(visibleCourses[selCourse]?.price || 11000).toLocaleString()}（税込）/ お一人様　・　約{Math.floor((visibleCourses[selCourse]?.duration||150)/60)}時間{(visibleCourses[selCourse]?.duration||150)%60 > 0 ? (visibleCourses[selCourse]?.duration||150)%60+'分' : ''}
                 </span>
               </div>
             </div>

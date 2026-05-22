@@ -319,6 +319,11 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots }) {
 
 // ── Main Admin ────────────────────────────────────────────────────
 export default function Admin() {
+  const [authed,    setAuthed]    = useState(false)
+  const [loginPw,   setLoginPw]   = useState('')
+  const [loginErr,  setLoginErr]  = useState('')
+  const [loggingIn, setLoggingIn] = useState(false)
+
   const [tab, setTab] = useState('reservations')
   const [toast,     setToast]     = useState({ msg:'', type:'ok' })
 
@@ -350,7 +355,7 @@ export default function Admin() {
   const [selectedNotifIds,setSelectedNotifIds]= useState(new Set())
   // ── Settings tab ────
   const defCutoff = { daysBefore:2, time:'22:00' }
-  const defCutoffRules = { '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff, '3':defCutoff, '4':defCutoff, '5':defCutoff, '6':{ daysBefore:3, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' } }
+  const defCutoffRules = { '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff, '3':defCutoff, '4':defCutoff, '5':defCutoff, '6':{ daysBefore:2, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' } }
   const defTimeRanges = [{ type:'lunch', label:'ランチ', start:'11:30', end:'14:00' }, { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' }]
   const [settings, setSettings] = useState({ maxSeats:8, courses:[], timeRanges: defTimeRanges, cutoffRules: defCutoffRules })
   const [settingsLoading,setSettingsLoading] = useState(false)
@@ -360,24 +365,69 @@ export default function Admin() {
   const [showAddCourse,  setShowAddCourse]   = useState(false)
   const [newCourse,      setNewCourse]       = useState({ name:'', price:'', description:'', duration:150, mealType:'dinner' })
 
+  // ── Password change ────
+  const [pwCurrent,   setPwCurrent]   = useState('')
+  const [pwNew,       setPwNew]       = useState('')
+  const [pwMsg,       setPwMsg]       = useState({ text:'', ok:true })
+  const [pwChanging,  setPwChanging]  = useState(false)
+
+  // ── Data management ────
+  const [custData,       setCustData]       = useState(null)
+  const [custLoading,    setCustLoading]    = useState(false)
+  const [allResData,     setAllResData]     = useState(null)
+  const [allResLoading,  setAllResLoading]  = useState(false)
+  const [allResDateFrom, setAllResDateFrom] = useState('')
+  const [allResDateTo,   setAllResDateTo]   = useState('')
+
   function showToast(msg, type='ok') {
     setToast({ msg, type })
     setTimeout(() => setToast({ msg:'', type:'ok' }), 3000)
   }
 
-  // ── Auto-load on mount ──────────────────────────────────────────
+  // ── Auth check on mount ────────────────────────────────────────
   useEffect(() => {
+    if (typeof window !== 'undefined' && sessionStorage.getItem('adminAuthed') === '1') {
+      setAuthed(true)
+    }
+  }, [])
+
+  async function doLogin() {
+    if (!loginPw) return setLoginErr('パスワードを入力してください')
+    setLoggingIn(true)
+    setLoginErr('')
+    try {
+      const r = await api.checkAdminPassword(loginPw)
+      if (r.success) {
+        sessionStorage.setItem('adminAuthed', '1')
+        setAuthed(true)
+      } else {
+        setLoginErr('パスワードが正しくありません')
+      }
+    } catch { setLoginErr('通信エラーが発生しました') }
+    setLoggingIn(false)
+  }
+
+  function doLogout() {
+    sessionStorage.removeItem('adminAuthed')
+    setAuthed(false)
+    setLoginPw('')
+  }
+
+  // ── Auto-load on mount / auth ───────────────────────────────────
+  useEffect(() => {
+    if (!authed) return
     loadBlocked()
     loadSeatBlocks()
     loadNotifications()
     loadSettings()
-  }, [])
+  }, [authed])
 
   useEffect(() => {
+    if (!authed) return
     setSelectedDate(null)
     setShowSeatForm(false)
     loadReservations()
-  }, [calYear, calMonth])
+  }, [authed, calYear, calMonth])
 
   useEffect(() => {
     const block = selectedDate ? seatBlocks.find(sb => sb.date === selectedDate) || null : null
@@ -600,13 +650,54 @@ export default function Admin() {
     <>
       <Head><title>管理画面 | 貝屋和光</title></Head>
 
+      {/* Login screen */}
+      {!authed && (
+        <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'#f5f5f5', padding:20 }}>
+          <div style={{ background:'#fff', borderRadius:16, padding:32, width:'100%', maxWidth:380, boxShadow:'0 2px 12px rgba(0,0,0,.1)' }}>
+            <div style={{ textAlign:'center', marginBottom:24 }}>
+              <h1 style={{ fontSize:18, fontWeight:'bold', color:'#06c755', marginBottom:4 }}>貝屋和光</h1>
+              <p style={{ fontSize:13, color:'#888' }}>管理画面ログイン</p>
+            </div>
+            <div style={{ marginBottom:12 }}>
+              <input type="password" value={loginPw} placeholder="パスワード"
+                style={{ ...iStyle, fontSize:16 }}
+                onChange={e => { setLoginPw(e.target.value); setLoginErr('') }}
+                onKeyDown={e => e.key==='Enter' && doLogin()} />
+            </div>
+            {loginErr && (
+              <div style={{ marginBottom:12, background:'#fff0f0', border:'1px solid #ffcccc', borderRadius:8, padding:'10px 14px', fontSize:13, color:'#e53935' }}>
+                {loginErr}
+              </div>
+            )}
+            <button disabled={loggingIn} onClick={doLogin}
+              style={{ width:'100%', padding:15, background:'#06c755', color:'#fff', border:'none', borderRadius:10, fontSize:15, fontWeight:'bold', cursor:'pointer', opacity:loggingIn?0.7:1 }}>
+              {loggingIn ? 'ログイン中...' : 'ログイン'}
+            </button>
+            <p style={{ marginTop:16, fontSize:11, color:'#aaa', textAlign:'center', lineHeight:1.6 }}>
+              パスワードを忘れた場合：<br />
+              GASスクリプトプロパティで ADMIN_PASSWORD を削除すると<br />
+              デフォルト（MV）に戻ります
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Main admin (only shown when authed) */}
+      {authed && <>
+
       {/* Header */}
       <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', position:'sticky', top:0, zIndex:10 }}>
         <h1 style={{ fontSize:16, fontWeight:'bold', color:'#fff' }}>貝屋和光 管理画面</h1>
-        <button onClick={loadReservations}
-          style={{ background:'rgba(255,255,255,.2)', border:'none', color:'#fff', padding:'6px 14px', borderRadius:6, fontSize:12, cursor:'pointer' }}>
-          更新
-        </button>
+        <div style={{ display:'flex', gap:8 }}>
+          <button onClick={loadReservations}
+            style={{ background:'rgba(255,255,255,.2)', border:'none', color:'#fff', padding:'6px 14px', borderRadius:6, fontSize:12, cursor:'pointer' }}>
+            更新
+          </button>
+          <button onClick={doLogout}
+            style={{ background:'rgba(255,255,255,.15)', border:'1px solid rgba(255,255,255,.4)', color:'#fff', padding:'6px 14px', borderRadius:6, fontSize:12, cursor:'pointer' }}>
+            ログアウト
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -987,7 +1078,7 @@ export default function Admin() {
                             </div>
                           </div>
                         ) : (
-                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12 }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, opacity: c.discontinued ? 0.5 : 1 }}>
                             <div>
                               <div style={{ fontSize:14, fontWeight:'bold' }}>{c.name}
                                 <span style={{ marginLeft:8, fontSize:11, padding:'1px 8px', borderRadius:10, fontWeight:'normal',
@@ -995,14 +1086,23 @@ export default function Admin() {
                                   color: c.mealType==='lunch'?'#e65100':c.mealType==='both'?'#6a1b9a':'#1565c0' }}>
                                   {c.mealType==='lunch'?'ランチ':c.mealType==='both'?'共通':'ディナー'}
                                 </span>
+                                {c.discontinued && (
+                                  <span style={{ marginLeft:6, fontSize:11, padding:'1px 8px', borderRadius:10, background:'#f5f5f5', color:'#999', fontWeight:'normal' }}>廃止中</span>
+                                )}
                               </div>
                               <div style={{ fontSize:13, color:'#06c755', marginTop:2 }}>¥{Number(c.price).toLocaleString()}（税込）</div>
                               {c.description && <div style={{ fontSize:12, color:'#888', marginTop:2 }}>{c.description}</div>}
                               <div style={{ fontSize:12, color:'#aaa', marginTop:2 }}>約{c.duration}分</div>
                             </div>
                             <div style={{ display:'flex', gap:6, flexShrink:0 }}>
-                              <button onClick={() => { setEditCourse({...c}); setEditCourseIdx(idx) }} style={btnBlue}>編集</button>
-                              <button onClick={() => setSettings(s=>({...s,courses:s.courses.filter((_,i)=>i!==idx)}))} style={btnRed}>削除</button>
+                              {!c.discontinued && (
+                                <button onClick={() => { setEditCourse({...c}); setEditCourseIdx(idx) }} style={btnBlue}>編集</button>
+                              )}
+                              <button
+                                onClick={() => setSettings(s=>({...s, courses:s.courses.map((x,i)=>i===idx?{...x,discontinued:!x.discontinued}:x)}))}
+                                style={c.discontinued ? {...btnGreen, padding:'6px 14px', fontSize:12} : {...btnRed}}>
+                                {c.discontinued ? '復活' : '廃止'}
+                              </button>
                             </div>
                           </div>
                         )}
@@ -1048,6 +1148,161 @@ export default function Admin() {
                   style={{ width:'100%', padding:15, background:'#06c755', color:'#fff', border:'none', borderRadius:12, fontSize:15, fontWeight:'bold', cursor:'pointer', opacity:settingsSaving?0.7:1 }}>
                   {settingsSaving?'保存中...':'設定を保存する'}
                 </button>
+
+                {/* パスワード変更 */}
+                <div style={{ background:'#fff', borderRadius:12, padding:20, marginTop:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14 }}>管理パスワード変更</h2>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                    <Field label="現在のパスワード">
+                      <input type="password" value={pwCurrent} style={iStyle} onChange={e=>{ setPwCurrent(e.target.value); setPwMsg({text:'',ok:true}) }} />
+                    </Field>
+                    <Field label="新しいパスワード">
+                      <input type="password" value={pwNew} placeholder="2文字以上" style={iStyle} onChange={e=>{ setPwNew(e.target.value); setPwMsg({text:'',ok:true}) }} />
+                    </Field>
+                  </div>
+                  {pwMsg.text && (
+                    <div style={{ marginBottom:10, padding:'8px 12px', borderRadius:8, fontSize:13,
+                      background: pwMsg.ok ? '#e8f5e9' : '#fff0f0',
+                      color: pwMsg.ok ? '#2e7d32' : '#e53935' }}>
+                      {pwMsg.text}
+                    </div>
+                  )}
+                  <button disabled={pwChanging} onClick={async () => {
+                    setPwChanging(true); setPwMsg({text:'',ok:true})
+                    try {
+                      const r = await api.changeAdminPassword(pwCurrent, pwNew)
+                      if (r.success) { setPwMsg({text:'パスワードを変更しました',ok:true}); setPwCurrent(''); setPwNew('') }
+                      else setPwMsg({text:r.error||'変更に失敗しました',ok:false})
+                    } catch { setPwMsg({text:'通信エラー',ok:false}) }
+                    setPwChanging(false)
+                  }} style={{ ...btnGreen, opacity:pwChanging?0.7:1 }}>
+                    {pwChanging?'変更中...':'パスワードを変更する'}
+                  </button>
+                  <p style={{ marginTop:10, fontSize:11, color:'#aaa', lineHeight:1.6 }}>
+                    ※ パスワードを忘れた場合：GASスクリプトプロパティで ADMIN_PASSWORD を削除するとデフォルト（MV）に戻ります
+                  </p>
+                </div>
+
+                {/* データ管理 */}
+                <div style={{ background:'#fff', borderRadius:12, padding:20, marginTop:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:16 }}>データ管理</h2>
+
+                  {/* 顧客データ */}
+                  <div style={{ marginBottom:20 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8 }}>
+                      <h3 style={{ fontSize:13, fontWeight:'bold' }}>顧客データ</h3>
+                      <div style={{ display:'flex', gap:8 }}>
+                        {custData && (
+                          <button onClick={() => {
+                            const header = '表示名,登録名,電話番号,来店回数,初回来店日,最終来店日,登録日時,LINE UserID'
+                            const rows = custData.map(c => [c.displayName,c.name,c.phone,c.visitCount,c.firstVisit,c.lastVisit,c.registeredAt,c.lineUserId].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','))
+                            const blob = new Blob(['﻿'+header+'\n'+rows.join('\n')], {type:'text/csv;charset=utf-8'})
+                            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download='customers.csv'; a.click()
+                          }} style={btnGray}>CSV出力</button>
+                        )}
+                        <button disabled={custLoading} onClick={async () => {
+                          setCustLoading(true)
+                          try { const r = await api.adminGetCustomerData(); setCustData(r.list||[]) }
+                          catch { showToast('通信エラー','error') }
+                          setCustLoading(false)
+                        }} style={btnGreen}>{custLoading?'読み込み中...':'顧客データを表示'}</button>
+                      </div>
+                    </div>
+                    {custData && (
+                      <div style={{ overflowX:'auto' }}>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12, minWidth:600 }}>
+                          <thead>
+                            <tr style={{ background:'#f5f5f5' }}>
+                              {['表示名','登録名','電話番号','来店回数','初回来店日','最終来店日'].map(h=>(
+                                <th key={h} style={{ padding:'8px 10px', textAlign:'left', fontWeight:'bold', color:'#555', borderBottom:'2px solid #e0e0e0', whiteSpace:'nowrap' }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {custData.length === 0 ? (
+                              <tr><td colSpan={6} style={{ padding:16, textAlign:'center', color:'#aaa' }}>データなし</td></tr>
+                            ) : custData.map((c,i) => (
+                              <tr key={i} style={{ borderBottom:'1px solid #f0f0f0', background: i%2===0?'#fff':'#fafafa' }}>
+                                <td style={{ padding:'7px 10px', display:'flex', alignItems:'center', gap:6 }}>
+                                  {c.pictureUrl && <img src={c.pictureUrl} alt="" style={{ width:24, height:24, borderRadius:'50%', flexShrink:0 }} />}
+                                  {c.displayName||'—'}
+                                </td>
+                                <td style={{ padding:'7px 10px' }}>{c.name||'—'}</td>
+                                <td style={{ padding:'7px 10px' }}>{c.phone||'—'}</td>
+                                <td style={{ padding:'7px 10px', textAlign:'center', fontWeight:'bold', color:'#06c755' }}>{c.visitCount||0}</td>
+                                <td style={{ padding:'7px 10px' }}>{c.firstVisit||'—'}</td>
+                                <td style={{ padding:'7px 10px' }}>{c.lastVisit||'—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <div style={{ marginTop:6, fontSize:11, color:'#aaa' }}>{custData.length}件</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 予約データ */}
+                  <div>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8 }}>
+                      <h3 style={{ fontSize:13, fontWeight:'bold' }}>予約データ（アーカイブ含む）</h3>
+                      {allResData && (
+                        <button onClick={() => {
+                          const header = '予約日,時間,名前,電話番号,人数,コース,ステータス,経路,登録日時'
+                          const rows = allResData.map(r => [r.date,r.time,r.name,r.phone,r.guests,r.course,r.status,r.source,r.createdAt].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','))
+                          const blob = new Blob(['﻿'+header+'\n'+rows.join('\n')], {type:'text/csv;charset=utf-8'})
+                          const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download='reservations.csv'; a.click()
+                        }} style={btnGray}>CSV出力</button>
+                      )}
+                    </div>
+                    <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
+                      <input type="date" value={allResDateFrom} onChange={e=>setAllResDateFrom(e.target.value)} style={{ ...iStyle, width:150 }} />
+                      <span style={{ fontSize:13, color:'#888' }}>〜</span>
+                      <input type="date" value={allResDateTo} onChange={e=>setAllResDateTo(e.target.value)} style={{ ...iStyle, width:150 }} />
+                      <button disabled={allResLoading} onClick={async () => {
+                        setAllResLoading(true)
+                        const pad = n => String(n).padStart(2,'0')
+                        const filter = {}
+                        if (allResDateFrom) filter.dateFrom = allResDateFrom.replace(/-/g,'/')
+                        if (allResDateTo)   filter.dateTo   = allResDateTo.replace(/-/g,'/')
+                        try { const r = await api.adminGetAllReservations(filter); setAllResData(r.list||[]) }
+                        catch { showToast('通信エラー','error') }
+                        setAllResLoading(false)
+                      }} style={btnGreen}>{allResLoading?'読み込み中...':'表示'}</button>
+                    </div>
+                    {allResData && (
+                      <div style={{ overflowX:'auto' }}>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12, minWidth:600 }}>
+                          <thead>
+                            <tr style={{ background:'#f5f5f5' }}>
+                              {['予約日','時間','名前','電話番号','人数','コース','ステータス'].map(h=>(
+                                <th key={h} style={{ padding:'8px 10px', textAlign:'left', fontWeight:'bold', color:'#555', borderBottom:'2px solid #e0e0e0', whiteSpace:'nowrap' }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allResData.length === 0 ? (
+                              <tr><td colSpan={7} style={{ padding:16, textAlign:'center', color:'#aaa' }}>データなし</td></tr>
+                            ) : allResData.map((r,i) => (
+                              <tr key={i} style={{ borderBottom:'1px solid #f0f0f0', background: i%2===0?'#fff':'#fafafa' }}>
+                                <td style={{ padding:'7px 10px', whiteSpace:'nowrap' }}>{r.date}</td>
+                                <td style={{ padding:'7px 10px' }}>{formatTime(r.time)}</td>
+                                <td style={{ padding:'7px 10px' }}>{r.name}</td>
+                                <td style={{ padding:'7px 10px' }}>{r.phone}</td>
+                                <td style={{ padding:'7px 10px', textAlign:'center' }}>{r.guests}</td>
+                                <td style={{ padding:'7px 10px' }}>{r.course}</td>
+                                <td style={{ padding:'7px 10px' }}>
+                                  <span style={{ ...statusStyle(r.status), padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:'bold' }}>{r.status}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <div style={{ marginTop:6, fontSize:11, color:'#aaa' }}>{allResData.length}件</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
               </>
             )}
           </div>
@@ -1071,6 +1326,9 @@ export default function Admin() {
       )}
 
       <Toast msg={toast.msg} type={toast.type} />
+
+      </>} {/* end authed */}
+
       <style jsx global>{`* { box-sizing:border-box; margin:0; padding:0; } body { font-family:-apple-system,'Hiragino Sans',sans-serif; background:#f5f5f5; }`}</style>
     </>
   )
