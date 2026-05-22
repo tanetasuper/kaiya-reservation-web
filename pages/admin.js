@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import Head from 'next/head'
+import Script from 'next/script'
 import { api } from '../lib/api'
 
 const TIME_SLOTS = ['17:00','17:30','18:00','18:30','19:00','19:30','20:00','20:30','21:00']
@@ -61,6 +62,18 @@ function fmtNotifDateTime(dt) {
   return s
 }
 
+// ── xlsx helper (requires SheetJS CDN) ───────────────────────────
+function dlXlsx(rows, sheetName, filename) {
+  const XLSX = window.XLSX
+  if (!XLSX) { alert('Excelライブラリが読み込まれていません。ページを再読み込みしてください。'); return }
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.json_to_sheet(rows)
+  const cols = rows.length > 0 ? Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length*2, 12) })) : []
+  ws['!cols'] = cols
+  XLSX.utils.book_append_sheet(wb, ws, sheetName)
+  XLSX.writeFile(wb, filename)
+}
+
 // ── Shared UI ─────────────────────────────────────────────────────
 function Toast({ msg, type }) {
   if (!msg) return null
@@ -86,6 +99,11 @@ const iStyle = {
   width:'100%', padding:'9px 12px',
   border:'1.5px solid #e0e0e0', borderRadius:8,
   fontSize:14, background:'#fafafa', fontFamily:'inherit',
+  boxSizing:'border-box',
+}
+const sStyle = {
+  ...iStyle, cursor:'pointer',
+  appearance:'auto', WebkitAppearance:'auto', MozAppearance:'auto',
 }
 const btnGreen  = { padding:'9px 20px', background:'#06c755', color:'#fff', border:'none', borderRadius:8, fontSize:14, fontWeight:'bold', cursor:'pointer' }
 const btnGray   = { padding:'9px 16px', background:'#f0f0f0', color:'#666', border:'none', borderRadius:8, fontSize:13, cursor:'pointer' }
@@ -193,22 +211,22 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots }) {
           <Field label="電話番号"><input type="tel"  value={data.phone}  style={iStyle} onChange={set('phone')}  /></Field>
           <Field label="来店日"> <input type="date"  value={data.date}   style={iStyle} onChange={set('date')}   /></Field>
           <Field label="時間">
-            <select value={data.time} style={iStyle} onChange={set('time')}>
+            <select value={data.time} style={sStyle} onChange={set('time')}>
               {(timeSlots || TIME_SLOTS).map(s => <option key={s}>{s}</option>)}
             </select>
           </Field>
           <Field label="人数">
-            <select value={data.guests} style={iStyle} onChange={set('guests')}>
+            <select value={data.guests} style={sStyle} onChange={set('guests')}>
               {GUESTS.map(n => <option key={n}>{n}</option>)}
             </select>
           </Field>
           <Field label="ステータス">
-            <select value={data.status} style={iStyle} onChange={set('status')}>
+            <select value={data.status} style={sStyle} onChange={set('status')}>
               {STATUSES.map(s => <option key={s}>{s}</option>)}
             </select>
           </Field>
           <Field label="経路">
-            <select value={data.source} style={iStyle} onChange={set('source')}>
+            <select value={data.source} style={sStyle} onChange={set('source')}>
               {SOURCES.map(s => <option key={s}>{s}</option>)}
             </select>
           </Field>
@@ -268,7 +286,7 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots }) {
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
           <Field label="来店日 *">  <input type="date" value={data.date} style={iStyle} onChange={set('date')} /></Field>
           <Field label="時間 *">
-            <select value={data.time} style={iStyle} onChange={set('time')}>
+            <select value={data.time} style={sStyle} onChange={set('time')}>
               <option value="">-- 選択 --</option>
               {(timeSlots || TIME_SLOTS).map(s => <option key={s}>{s}</option>)}
             </select>
@@ -276,12 +294,12 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots }) {
           <Field label="お名前 *">   <input type="text" value={data.name}  placeholder="山田 太郎"       style={iStyle} onChange={set('name')}  /></Field>
           <Field label="電話番号 *"> <input type="tel"  value={data.phone} placeholder="090-0000-0000"   style={iStyle} onChange={set('phone')} /></Field>
           <Field label="人数">
-            <select value={data.guests} style={iStyle} onChange={set('guests')}>
+            <select value={data.guests} style={sStyle} onChange={set('guests')}>
               {GUESTS.map(n => <option key={n}>{n}</option>)}
             </select>
           </Field>
           <Field label="経路">
-            <select value={data.source} style={iStyle} onChange={set('source')}>
+            <select value={data.source} style={sStyle} onChange={set('source')}>
               {SOURCES.map(s => <option key={s}>{s}</option>)}
             </select>
           </Field>
@@ -319,10 +337,14 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots }) {
 
 // ── Main Admin ────────────────────────────────────────────────────
 export default function Admin() {
-  const [authed,    setAuthed]    = useState(false)
-  const [loginPw,   setLoginPw]   = useState('')
-  const [loginErr,  setLoginErr]  = useState('')
-  const [loggingIn, setLoggingIn] = useState(false)
+  const [authed,       setAuthed]       = useState(false)
+  const [loginPw,      setLoginPw]      = useState('')
+  const [loginErr,     setLoginErr]     = useState('')
+  const [loggingIn,    setLoggingIn]    = useState(false)
+  const [showRecovery, setShowRecovery] = useState(false)
+  const [recoveryCode, setRecoveryCode] = useState('')
+  const [recoveryMsg,  setRecoveryMsg]  = useState({ text:'', ok:true })
+  const [recovering,   setRecovering]   = useState(false)
 
   const [tab, setTab] = useState('reservations')
   const [toast,     setToast]     = useState({ msg:'', type:'ok' })
@@ -357,7 +379,7 @@ export default function Admin() {
   const defCutoff = { daysBefore:2, time:'22:00' }
   const defCutoffRules = { '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff, '3':defCutoff, '4':defCutoff, '5':defCutoff, '6':{ daysBefore:2, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' } }
   const defTimeRanges = [{ type:'lunch', label:'ランチ', start:'11:30', end:'14:00' }, { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' }]
-  const [settings, setSettings] = useState({ maxSeats:8, courses:[], timeRanges: defTimeRanges, cutoffRules: defCutoffRules })
+  const [settings, setSettings] = useState({ maxSeats:8, courses:[], timeRanges: defTimeRanges, cutoffRules: defCutoffRules, bookingNotes:'' })
   const [settingsLoading,setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving]  = useState(false)
   const [editCourseIdx,  setEditCourseIdx]   = useState(-1)
@@ -370,6 +392,10 @@ export default function Admin() {
   const [pwNew,       setPwNew]       = useState('')
   const [pwMsg,       setPwMsg]       = useState({ text:'', ok:true })
   const [pwChanging,  setPwChanging]  = useState(false)
+  const [rcCurrent,   setRcCurrent]   = useState('')
+  const [rcNew,       setRcNew]       = useState('')
+  const [rcMsg,       setRcMsg]       = useState({ text:'', ok:true })
+  const [rcChanging,  setRcChanging]  = useState(false)
 
   // ── Data management ────
   const [custData,       setCustData]       = useState(null)
@@ -411,6 +437,24 @@ export default function Admin() {
     sessionStorage.removeItem('adminAuthed')
     setAuthed(false)
     setLoginPw('')
+  }
+
+  async function doRecovery() {
+    if (!recoveryCode.trim()) return setRecoveryMsg({ text:'リカバリーコードを入力してください', ok:false })
+    setRecovering(true)
+    setRecoveryMsg({ text:'', ok:true })
+    try {
+      const r = await api.resetAdminPassword(recoveryCode.trim())
+      if (r.success) {
+        setRecoveryMsg({ text:'パスワードを「MV」にリセットしました。ログインしてください。', ok:true })
+        setShowRecovery(false)
+        setLoginPw('')
+        setRecoveryCode('')
+      } else {
+        setRecoveryMsg({ text: r.error || 'リカバリーコードが正しくありません', ok:false })
+      }
+    } catch { setRecoveryMsg({ text:'通信エラーが発生しました', ok:false }) }
+    setRecovering(false)
   }
 
   // ── Auto-load on mount / auth ───────────────────────────────────
@@ -488,6 +532,7 @@ export default function Admin() {
           courses: r.courses||[],
           timeRanges: tr,
           cutoffRules: r.cutoffRules||defCutoffRules,
+          bookingNotes: r.bookingNotes||'',
         })
       }
     } catch {}
@@ -649,6 +694,7 @@ export default function Admin() {
   return (
     <>
       <Head><title>管理画面 | 貝屋和光</title></Head>
+      <Script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" strategy="lazyOnload" />
 
       {/* Login screen */}
       {!authed && (
@@ -673,11 +719,33 @@ export default function Admin() {
               style={{ width:'100%', padding:15, background:'#06c755', color:'#fff', border:'none', borderRadius:10, fontSize:15, fontWeight:'bold', cursor:'pointer', opacity:loggingIn?0.7:1 }}>
               {loggingIn ? 'ログイン中...' : 'ログイン'}
             </button>
-            <p style={{ marginTop:16, fontSize:11, color:'#aaa', textAlign:'center', lineHeight:1.6 }}>
-              パスワードを忘れた場合：<br />
-              GASスクリプトプロパティで ADMIN_PASSWORD を削除すると<br />
-              デフォルト（MV）に戻ります
-            </p>
+            <button onClick={() => { setShowRecovery(r=>!r); setRecoveryMsg({text:'',ok:true}); setRecoveryCode('') }}
+              style={{ marginTop:12, background:'none', border:'none', color:'#aaa', fontSize:12, cursor:'pointer', textDecoration:'underline', width:'100%' }}>
+              パスワードを忘れた方はこちら
+            </button>
+            {showRecovery && (
+              <div style={{ marginTop:12, padding:14, background:'#f5f5f5', borderRadius:10 }}>
+                <p style={{ fontSize:12, color:'#555', marginBottom:10, lineHeight:1.6 }}>
+                  リカバリーコードを入力するとパスワードを「MV」にリセットします。<br />
+                  リカバリーコードは管理画面の設定で変更できます。
+                </p>
+                <input type="text" value={recoveryCode} placeholder="リカバリーコード"
+                  style={{ ...iStyle, marginBottom:8 }}
+                  onChange={e => { setRecoveryCode(e.target.value); setRecoveryMsg({text:'',ok:true}) }}
+                  onKeyDown={e => e.key==='Enter' && doRecovery()} />
+                {recoveryMsg.text && (
+                  <div style={{ marginBottom:8, padding:'8px 12px', borderRadius:8, fontSize:12,
+                    background: recoveryMsg.ok ? '#e8f5e9' : '#fff0f0',
+                    color: recoveryMsg.ok ? '#2e7d32' : '#e53935' }}>
+                    {recoveryMsg.text}
+                  </div>
+                )}
+                <button disabled={recovering} onClick={doRecovery}
+                  style={{ width:'100%', padding:12, background:'#555', color:'#fff', border:'none', borderRadius:8, fontSize:13, fontWeight:'bold', cursor:'pointer', opacity:recovering?0.7:1 }}>
+                  {recovering ? 'リセット中...' : 'パスワードをリセットする'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -832,7 +900,7 @@ export default function Admin() {
                       <Field label="停止席数">
                         <select value={seatInput.seats}
                           onChange={e => setSeatInput(s=>({...s, seats:parseInt(e.target.value)||1}))}
-                          style={{ ...iStyle, width:90 }}>
+                          style={{ ...sStyle, width:90 }}>
                           {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}席</option>)}
                         </select>
                       </Field>
@@ -858,7 +926,7 @@ export default function Admin() {
                       <Field label="停止席数">
                         <select value={seatInput.seats}
                           onChange={e => setSeatInput(s=>({...s, seats:parseInt(e.target.value)||1}))}
-                          style={{ ...iStyle, width:90 }}>
+                          style={{ ...sStyle, width:90 }}>
                           {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}席</option>)}
                         </select>
                       </Field>
@@ -988,7 +1056,7 @@ export default function Admin() {
                       <label style={{ fontSize:13, color:'#555', whiteSpace:'nowrap' }}>最大席数</label>
                       <select value={settings.maxSeats}
                         onChange={e => setSettings(s=>({...s, maxSeats:parseInt(e.target.value)||8}))}
-                        style={{ ...iStyle, width:90 }}>
+                        style={{ ...sStyle, width:90 }}>
                         {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}名</option>)}
                       </select>
                     </div>
@@ -1033,7 +1101,7 @@ export default function Admin() {
                             <td style={{ padding:'8px 8px', fontWeight:'bold', color: key==='0'||key==='6'||key==='holiday' ? '#e53935' : '#333' }}>{label}</td>
                             <td style={{ padding:'6px 8px' }}>
                               <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                                <select value={rule.daysBefore} style={{ ...iStyle, width:65, padding:'5px 6px', fontSize:12 }}
+                                <select value={rule.daysBefore} style={{ ...sStyle, width:65, padding:'5px 6px', fontSize:12 }}
                                   onChange={e=>setSettings(s=>({...s, cutoffRules:{...s.cutoffRules, [key]:{...rule, daysBefore:parseInt(e.target.value)||1}}}))} >
                                   {[1,2,3,4,5,6,7].map(n=><option key={n} value={n}>{n}日前</option>)}
                                 </select>
@@ -1065,7 +1133,7 @@ export default function Admin() {
                             <Field label="説明文" span><input type="text" value={editCourse.description} style={iStyle} onChange={e=>setEditCourse(c=>({...c,description:e.target.value}))} /></Field>
                             <Field label="所要時間（分）"><input type="number" value={editCourse.duration} style={iStyle} onChange={e=>setEditCourse(c=>({...c,duration:parseInt(e.target.value)||0}))} /></Field>
                             <Field label="食事タイプ">
-                              <select value={editCourse.mealType||'dinner'} style={iStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
+                              <select value={editCourse.mealType||'dinner'} style={sStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
                                 <option value="lunch">ランチ</option>
                                 <option value="dinner">ディナー</option>
                                 <option value="both">共通</option>
@@ -1119,7 +1187,7 @@ export default function Admin() {
                         <Field label="説明文" span><input type="text" value={newCourse.description} placeholder="旬の貝と野菜をふんだんに使ったコースメニュー" style={iStyle} onChange={e=>setNewCourse(c=>({...c,description:e.target.value}))} /></Field>
                         <Field label="所要時間（分）"><input type="number" value={newCourse.duration} placeholder="150" style={iStyle} onChange={e=>setNewCourse(c=>({...c,duration:e.target.value}))} /></Field>
                         <Field label="食事タイプ">
-                          <select value={newCourse.mealType||'dinner'} style={iStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
+                          <select value={newCourse.mealType||'dinner'} style={sStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
                             <option value="lunch">ランチ</option>
                             <option value="dinner">ディナー</option>
                             <option value="both">共通</option>
@@ -1142,6 +1210,20 @@ export default function Admin() {
                       ＋ コースを追加
                     </button>
                   )}
+                </div>
+
+                {/* 予約注意事項 */}
+                <div style={{ background:'#fff', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>予約確認時の注意事項・キャンセルポリシー</h2>
+                  <p style={{ fontSize:12, color:'#888', marginBottom:12, lineHeight:1.6 }}>
+                    予約確認画面でポップアップ表示されます。予約確認通知（LINE）にも送信されます。
+                  </p>
+                  <textarea
+                    value={settings.bookingNotes||''}
+                    onChange={e => setSettings(s=>({...s, bookingNotes:e.target.value}))}
+                    placeholder={'例：\n⚠️ キャンセルポリシー\n\n当店は完全予約式です。\n\n来店2日前22:00まで：キャンセル料0%\n前日22:00まで：50%\n当日以降：100%\n\nご不明な点はお電話ください。'}
+                    rows={10}
+                    style={{ ...iStyle, resize:'vertical', lineHeight:1.7 }} />
                 </div>
 
                 <button disabled={settingsSaving} onClick={doSaveSettings}
@@ -1178,128 +1260,124 @@ export default function Admin() {
                   }} style={{ ...btnGreen, opacity:pwChanging?0.7:1 }}>
                     {pwChanging?'変更中...':'パスワードを変更する'}
                   </button>
-                  <p style={{ marginTop:10, fontSize:11, color:'#aaa', lineHeight:1.6 }}>
-                    ※ パスワードを忘れた場合：GASスクリプトプロパティで ADMIN_PASSWORD を削除するとデフォルト（MV）に戻ります
-                  </p>
+                  <div style={{ marginTop:20, paddingTop:16, borderTop:'1px solid #f0f0f0' }}>
+                    <div style={{ fontSize:13, fontWeight:'bold', marginBottom:10, color:'#555' }}>リカバリーコードの変更</div>
+                    <p style={{ fontSize:12, color:'#888', marginBottom:10, lineHeight:1.6 }}>
+                      パスワードを忘れた際にリセットに使うコードです。ログイン画面の「パスワードを忘れた方はこちら」から使います。<br />
+                      初期値：KAIYA
+                    </p>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+                      <Field label="現在のパスワード（確認）">
+                        <input type="password" value={rcCurrent} style={iStyle} onChange={e=>{ setRcCurrent(e.target.value); setRcMsg({text:'',ok:true}) }} />
+                      </Field>
+                      <Field label="新しいリカバリーコード">
+                        <input type="text" value={rcNew} placeholder="2文字以上" style={iStyle} onChange={e=>{ setRcNew(e.target.value); setRcMsg({text:'',ok:true}) }} />
+                      </Field>
+                    </div>
+                    {rcMsg.text && (
+                      <div style={{ marginBottom:10, padding:'8px 12px', borderRadius:8, fontSize:13,
+                        background: rcMsg.ok ? '#e8f5e9' : '#fff0f0',
+                        color: rcMsg.ok ? '#2e7d32' : '#e53935' }}>
+                        {rcMsg.text}
+                      </div>
+                    )}
+                    <button disabled={rcChanging} onClick={async () => {
+                      setRcChanging(true); setRcMsg({text:'',ok:true})
+                      try {
+                        const r = await api.changeRecoveryCode(rcCurrent, rcNew)
+                        if (r.success) { setRcMsg({text:'リカバリーコードを変更しました',ok:true}); setRcCurrent(''); setRcNew('') }
+                        else setRcMsg({text:r.error||'変更に失敗しました',ok:false})
+                      } catch { setRcMsg({text:'通信エラー',ok:false}) }
+                      setRcChanging(false)
+                    }} style={{ ...btnGray, fontSize:13 }}>
+                      {rcChanging?'変更中...':'リカバリーコードを変更する'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* データ管理 */}
                 <div style={{ background:'#fff', borderRadius:12, padding:20, marginTop:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
-                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:16 }}>データ管理</h2>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>データ管理</h2>
+                  <p style={{ fontSize:12, color:'#888', marginBottom:16, lineHeight:1.6 }}>
+                    ダウンロードしたファイルはExcel・Numbersで開けます。データが多い場合は少し時間がかかります。
+                  </p>
 
                   {/* 顧客データ */}
-                  <div style={{ marginBottom:20 }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8 }}>
-                      <h3 style={{ fontSize:13, fontWeight:'bold' }}>顧客データ</h3>
-                      <div style={{ display:'flex', gap:8 }}>
-                        {custData && (
-                          <button onClick={() => {
-                            const header = '表示名,登録名,電話番号,来店回数,初回来店日,最終来店日,登録日時,LINE UserID'
-                            const rows = custData.map(c => [c.displayName,c.name,c.phone,c.visitCount,c.firstVisit,c.lastVisit,c.registeredAt,c.lineUserId].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','))
-                            const blob = new Blob(['﻿'+header+'\n'+rows.join('\n')], {type:'text/csv;charset=utf-8'})
-                            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download='customers.csv'; a.click()
-                          }} style={btnGray}>CSV出力</button>
-                        )}
-                        <button disabled={custLoading} onClick={async () => {
-                          setCustLoading(true)
-                          try { const r = await api.adminGetCustomerData(); setCustData(r.list||[]) }
-                          catch { showToast('通信エラー','error') }
-                          setCustLoading(false)
-                        }} style={btnGreen}>{custLoading?'読み込み中...':'顧客データを表示'}</button>
+                  <div style={{ padding:16, background:'#f8fffe', border:'1px solid #c8e6c9', borderRadius:10, marginBottom:12 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10 }}>
+                      <div>
+                        <div style={{ fontWeight:'bold', fontSize:13, marginBottom:3 }}>顧客データ</div>
+                        <div style={{ fontSize:12, color:'#888' }}>氏名・電話・来店回数・LINEプロフィールなど</div>
                       </div>
+                      <button disabled={custLoading} onClick={async () => {
+                        setCustLoading(true)
+                        try {
+                          const r = await api.adminGetCustomerData()
+                          const list = r.list || []
+                          if (!list.length) { showToast('顧客データが0件です','error'); setCustLoading(false); return }
+                          const rows = list.map(c => ({
+                            '表示名（LINE）': c.displayName||'',
+                            '登録名': c.name||'',
+                            '電話番号': c.phone||'',
+                            '来店回数': c.visitCount||0,
+                            '初回来店日': c.firstVisit||'',
+                            '最終来店日': c.lastVisit||'',
+                            '登録日時': c.registeredAt||'',
+                            'LINE UserID': c.lineUserId||'',
+                            'プロフィール画像URL': c.pictureUrl||'',
+                          }))
+                          dlXlsx(rows, '顧客データ', 'customers.xlsx')
+                          showToast('顧客データをダウンロードしました（'+list.length+'件）')
+                        } catch { showToast('通信エラー','error') }
+                        setCustLoading(false)
+                      }} style={{ ...btnGreen, whiteSpace:'nowrap' }}>
+                        {custLoading ? '取得中...' : '📥 Excelダウンロード'}
+                      </button>
                     </div>
-                    {custData && (
-                      <div style={{ overflowX:'auto' }}>
-                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12, minWidth:600 }}>
-                          <thead>
-                            <tr style={{ background:'#f5f5f5' }}>
-                              {['表示名','登録名','電話番号','来店回数','初回来店日','最終来店日'].map(h=>(
-                                <th key={h} style={{ padding:'8px 10px', textAlign:'left', fontWeight:'bold', color:'#555', borderBottom:'2px solid #e0e0e0', whiteSpace:'nowrap' }}>{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {custData.length === 0 ? (
-                              <tr><td colSpan={6} style={{ padding:16, textAlign:'center', color:'#aaa' }}>データなし</td></tr>
-                            ) : custData.map((c,i) => (
-                              <tr key={i} style={{ borderBottom:'1px solid #f0f0f0', background: i%2===0?'#fff':'#fafafa' }}>
-                                <td style={{ padding:'7px 10px', display:'flex', alignItems:'center', gap:6 }}>
-                                  {c.pictureUrl && <img src={c.pictureUrl} alt="" style={{ width:24, height:24, borderRadius:'50%', flexShrink:0 }} />}
-                                  {c.displayName||'—'}
-                                </td>
-                                <td style={{ padding:'7px 10px' }}>{c.name||'—'}</td>
-                                <td style={{ padding:'7px 10px' }}>{c.phone||'—'}</td>
-                                <td style={{ padding:'7px 10px', textAlign:'center', fontWeight:'bold', color:'#06c755' }}>{c.visitCount||0}</td>
-                                <td style={{ padding:'7px 10px' }}>{c.firstVisit||'—'}</td>
-                                <td style={{ padding:'7px 10px' }}>{c.lastVisit||'—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        <div style={{ marginTop:6, fontSize:11, color:'#aaa' }}>{custData.length}件</div>
-                      </div>
-                    )}
                   </div>
 
                   {/* 予約データ */}
-                  <div>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8 }}>
-                      <h3 style={{ fontSize:13, fontWeight:'bold' }}>予約データ（アーカイブ含む）</h3>
-                      {allResData && (
-                        <button onClick={() => {
-                          const header = '予約日,時間,名前,電話番号,人数,コース,ステータス,経路,登録日時'
-                          const rows = allResData.map(r => [r.date,r.time,r.name,r.phone,r.guests,r.course,r.status,r.source,r.createdAt].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','))
-                          const blob = new Blob(['﻿'+header+'\n'+rows.join('\n')], {type:'text/csv;charset=utf-8'})
-                          const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download='reservations.csv'; a.click()
-                        }} style={btnGray}>CSV出力</button>
-                      )}
-                    </div>
-                    <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
-                      <input type="date" value={allResDateFrom} onChange={e=>setAllResDateFrom(e.target.value)} style={{ ...iStyle, width:150 }} />
+                  <div style={{ padding:16, background:'#f3f8ff', border:'1px solid #bbdefb', borderRadius:10 }}>
+                    <div style={{ fontWeight:'bold', fontSize:13, marginBottom:3 }}>予約データ（アーカイブ含む）</div>
+                    <div style={{ fontSize:12, color:'#888', marginBottom:12 }}>期間を選択してダウンロード（空欄=全期間）</div>
+                    <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', marginBottom:10 }}>
+                      <input type="date" value={allResDateFrom} onChange={e=>setAllResDateFrom(e.target.value)}
+                        style={{ ...iStyle, width:150, fontSize:13 }} />
                       <span style={{ fontSize:13, color:'#888' }}>〜</span>
-                      <input type="date" value={allResDateTo} onChange={e=>setAllResDateTo(e.target.value)} style={{ ...iStyle, width:150 }} />
-                      <button disabled={allResLoading} onClick={async () => {
-                        setAllResLoading(true)
-                        const pad = n => String(n).padStart(2,'0')
-                        const filter = {}
-                        if (allResDateFrom) filter.dateFrom = allResDateFrom.replace(/-/g,'/')
-                        if (allResDateTo)   filter.dateTo   = allResDateTo.replace(/-/g,'/')
-                        try { const r = await api.adminGetAllReservations(filter); setAllResData(r.list||[]) }
-                        catch { showToast('通信エラー','error') }
-                        setAllResLoading(false)
-                      }} style={btnGreen}>{allResLoading?'読み込み中...':'表示'}</button>
+                      <input type="date" value={allResDateTo} onChange={e=>setAllResDateTo(e.target.value)}
+                        style={{ ...iStyle, width:150, fontSize:13 }} />
                     </div>
-                    {allResData && (
-                      <div style={{ overflowX:'auto' }}>
-                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12, minWidth:600 }}>
-                          <thead>
-                            <tr style={{ background:'#f5f5f5' }}>
-                              {['予約日','時間','名前','電話番号','人数','コース','ステータス'].map(h=>(
-                                <th key={h} style={{ padding:'8px 10px', textAlign:'left', fontWeight:'bold', color:'#555', borderBottom:'2px solid #e0e0e0', whiteSpace:'nowrap' }}>{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {allResData.length === 0 ? (
-                              <tr><td colSpan={7} style={{ padding:16, textAlign:'center', color:'#aaa' }}>データなし</td></tr>
-                            ) : allResData.map((r,i) => (
-                              <tr key={i} style={{ borderBottom:'1px solid #f0f0f0', background: i%2===0?'#fff':'#fafafa' }}>
-                                <td style={{ padding:'7px 10px', whiteSpace:'nowrap' }}>{r.date}</td>
-                                <td style={{ padding:'7px 10px' }}>{formatTime(r.time)}</td>
-                                <td style={{ padding:'7px 10px' }}>{r.name}</td>
-                                <td style={{ padding:'7px 10px' }}>{r.phone}</td>
-                                <td style={{ padding:'7px 10px', textAlign:'center' }}>{r.guests}</td>
-                                <td style={{ padding:'7px 10px' }}>{r.course}</td>
-                                <td style={{ padding:'7px 10px' }}>
-                                  <span style={{ ...statusStyle(r.status), padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:'bold' }}>{r.status}</span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        <div style={{ marginTop:6, fontSize:11, color:'#aaa' }}>{allResData.length}件</div>
-                      </div>
-                    )}
+                    <button disabled={allResLoading} onClick={async () => {
+                      setAllResLoading(true)
+                      const filter = {}
+                      if (allResDateFrom) filter.dateFrom = allResDateFrom.replace(/-/g,'/')
+                      if (allResDateTo)   filter.dateTo   = allResDateTo.replace(/-/g,'/')
+                      try {
+                        const r = await api.adminGetAllReservations(filter)
+                        const list = r.list || []
+                        if (!list.length) { showToast('該当期間の予約データが0件です','error'); setAllResLoading(false); return }
+                        const rows = list.map(res => ({
+                          '予約日': res.date||'',
+                          '時間': formatTime(res.time)||'',
+                          '終了時間': formatTime(res.endTime)||'',
+                          'お名前': res.name||'',
+                          '電話番号': res.phone||'',
+                          '人数': res.guests||'',
+                          'コース': res.course||'',
+                          'ステータス': res.status||'',
+                          '経路': res.source||'',
+                          'メモ': res.notes||'',
+                          '登録日時': res.createdAt||'',
+                          '予約ID': res.id||'',
+                        }))
+                        const label = (allResDateFrom||'') + (allResDateFrom&&allResDateTo?'〜':'') + (allResDateTo||'') || '全期間'
+                        dlXlsx(rows, '予約データ', 'reservations_'+label+'.xlsx')
+                        showToast('予約データをダウンロードしました（'+list.length+'件）')
+                      } catch { showToast('通信エラー','error') }
+                      setAllResLoading(false)
+                    }} style={{ ...btnGreen, whiteSpace:'nowrap' }}>
+                      {allResLoading ? '取得中...' : '📥 Excelダウンロード'}
+                    </button>
                   </div>
                 </div>
 

@@ -186,6 +186,8 @@ export default function Home() {
     { type:'lunch', label:'ランチ', start:'11:30', end:'14:00' },
     { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' },
   ])
+  const [bookingNotes, setBookingNotes] = useState('')
+  const [showNotesPopup, setShowNotesPopup] = useState(false)
   const defCutoff = { daysBefore:2, time:'22:00' }
   const [settingsCutoffRules, setSettingsCutoffRules] = useState({
     '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff,
@@ -423,6 +425,7 @@ export default function Home() {
       if (r.courses && r.courses.length > 0) { setSettingsCourses(r.courses); setSelCourse(0) }
       if (r.timeRanges && r.timeRanges.length > 0) setSettingsTimeRanges(r.timeRanges)
       if (r.cutoffRules) setSettingsCutoffRules(r.cutoffRules)
+      if (r.bookingNotes) setBookingNotes(r.bookingNotes)
     }).catch(() => {})
   }, [])
 
@@ -462,7 +465,11 @@ export default function Home() {
         return setInputErr('1名様のご予約はこの日はお受けできません')
     }
     setInputErr('')
-    setScreen('confirm')
+    if (bookingNotes) {
+      setShowNotesPopup(true)
+    } else {
+      setScreen('confirm')
+    }
   }
 
   // ===== 予約送信 =====
@@ -890,15 +897,12 @@ export default function Home() {
               </div>
             )}
           </div>
-          <div className="policy">
-            ⚠️ キャンセルポリシー<br /><br />
-            当店は完全予約式での営業になります。<br />
-            キャンセル料（予約人数変更含め）がございます。<br /><br />
-            2日前22:00まで：0%<br />
-            前日22:00まで：50%<br />
-            当日以降：100%<br /><br />
-            直前の来店時間変更については対応できない可能性がございます。お電話にてご確認ください。
-          </div>
+          {bookingNotes ? (
+            <div className="policy" style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={() => setShowNotesPopup(true)}>
+              <span style={{ fontSize:16 }}>⚠️</span>
+              <span>注意事項・キャンセルポリシーを確認する（タップで再表示）</span>
+            </div>
+          ) : null}
           {cfErr && <div className="err mt12">{cfErr}</div>}
           <div className="mt16">
             <button className="btn-p" disabled={submitting} onClick={submitReservation}>
@@ -1090,6 +1094,26 @@ export default function Home() {
             <div className="mt8">
               <button className="btn-s" onClick={() => setScreen('change')}>← 戻る</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NOTES POPUP ── */}
+      {showNotesPopup && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:500, display:'flex', alignItems:'flex-end', justifyContent:'center' }}>
+          <div style={{ background:'#fff', borderRadius:'16px 16px 0 0', padding:'24px 20px 36px', width:'100%', maxWidth:480, maxHeight:'80vh', overflowY:'auto' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+              <h2 style={{ fontSize:16, fontWeight:'bold', color:'#111' }}>⚠️ ご予約にあたっての注意事項</h2>
+              <button onClick={() => setShowNotesPopup(false)} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'#aaa' }}>✕</button>
+            </div>
+            <div style={{ fontSize:13, color:'#444', lineHeight:1.9, whiteSpace:'pre-line', marginBottom:24 }}>
+              {bookingNotes}
+            </div>
+            <button
+              onClick={() => { setShowNotesPopup(false); setScreen('confirm') }}
+              style={{ display:'block', width:'100%', padding:16, background:'#06c755', color:'#fff', border:'none', borderRadius:12, fontSize:16, fontWeight:'bold', cursor:'pointer' }}>
+              確認しました　→
+            </button>
           </div>
         </div>
       )}
