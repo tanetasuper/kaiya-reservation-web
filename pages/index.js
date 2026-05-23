@@ -251,7 +251,7 @@ export default function Home() {
       monthAvailCacheRef.current[cacheKey] = dates
       setMonthAvail(dates)
       // Silently preload adjacent months
-      ;[-1, 1].forEach(delta => {
+      ;[-3, -2, -1, 1, 2, 3].forEach(delta => {
         let pm = month + delta, py = year
         if (pm < 0) { pm = 11; py-- }
         if (pm > 11) { pm = 0; py++ }

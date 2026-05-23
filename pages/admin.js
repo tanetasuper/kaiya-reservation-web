@@ -503,7 +503,7 @@ export default function Admin() {
       resCacheRef.current[cacheKey] = list
       setReservations(list)
       // Silently preload adjacent months
-      ;[-1, 1].forEach(delta => {
+      ;[-3, -2, -1, 1, 2, 3].forEach(delta => {
         let pm = m + delta, py = y
         if (pm < 0) { pm = 11; py-- }
         if (pm > 11) { pm = 0; py++ }
@@ -805,10 +805,10 @@ export default function Admin() {
       )}
 
       {/* Main admin (only shown when authed) */}
-      {authed && <>
+      {authed && <div style={{ display:'flex', flexDirection:'column', height:'100vh' }}>
 
       {/* Header */}
-      <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', position:'fixed', top:0, left:0, width:'100%', zIndex:10 }}>
+      <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
         <h1 style={{ fontSize:16, fontWeight:'bold', color:'#fff' }}>貝屋和光 管理画面</h1>
         <div style={{ display:'flex', gap:8 }}>
           <button onClick={doRefreshAll}
@@ -823,7 +823,7 @@ export default function Admin() {
       </div>
 
       {/* Tabs */}
-      <div style={{ background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex', position:'fixed', top:54, left:0, width:'100%', zIndex:9 }}>
+      <div style={{ background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex', flexShrink:0 }}>
         {[['reservations','予約一覧'], ['notifications','通知'], ['settings','設定']].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{
@@ -844,7 +844,8 @@ export default function Admin() {
         ))}
       </div>
 
-      <div style={{ paddingTop:100, paddingLeft:16, paddingRight:16, paddingBottom:16, maxWidth:960, margin:'0 auto' }}>
+      <div style={{ flex:1, overflowY:'auto', minHeight:0 }}>
+      <div style={{ paddingTop:12, paddingLeft:16, paddingRight:16, paddingBottom:16, maxWidth:960, margin:'0 auto' }}>
 
         {/* ─── TAB: 予約一覧 ──────────────────────────────────────── */}
         {tab==='reservations' && (
@@ -1482,6 +1483,7 @@ export default function Admin() {
           </div>
         )}
       </div>
+      </div>
 
       {/* Modals */}
       {editRes && (
@@ -1501,7 +1503,7 @@ export default function Admin() {
 
       <Toast msg={toast.msg} type={toast.type} />
 
-      </>} {/* end authed */}
+      </div>} {/* end authed */}
 
       <style jsx global>{`* { box-sizing:border-box; margin:0; padding:0; } body { font-family:-apple-system,'Hiragino Sans',sans-serif; background:#f5f5f5; }`}</style>
     </>
