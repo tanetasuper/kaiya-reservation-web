@@ -132,13 +132,16 @@ function CustomSelect({ value, onChange, children, style }) {
       </div>
       {open && <>
         <div style={{ position:'fixed', inset:0, zIndex:1998 }} onClick={() => setOpen(false)} />
-        <div style={{
-          position:'fixed', top:pos.top, left:pos.left, width:pos.width,
-          zIndex:1999, background:'#fff',
-          border:'1.5px solid #e0e0e0', borderRadius:8,
-          boxShadow:'0 4px 16px rgba(0,0,0,.18)',
-          maxHeight:220, overflowY:'auto',
-        }}>
+        <div
+          onTouchStart={e => e.stopPropagation()}
+          onTouchMove={e => e.stopPropagation()}
+          style={{
+            position:'fixed', top:pos.top, left:pos.left, width:pos.width,
+            zIndex:1999, background:'#fff',
+            border:'1.5px solid #e0e0e0', borderRadius:8,
+            boxShadow:'0 4px 16px rgba(0,0,0,.18)',
+            maxHeight:220, overflowY:'auto',
+          }}>
           {opts.map((opt, i) => (
             <div key={i} onClick={() => { onChange({ target:{ value: opt.val } }); setOpen(false) }}
               style={{
@@ -152,6 +155,25 @@ function CustomSelect({ value, onChange, children, style }) {
           ))}
         </div>
       </>}
+    </div>
+  )
+}
+
+function TimeSelect({ value, onChange }) {
+  const parts = (value || '00:00').split(':')
+  const h = parts[0] || '00'
+  const m = parts[1] || '00'
+  const hours = Array.from({length:24}, (_, i) => String(i).padStart(2,'0'))
+  const mins = ['00','15','30','45']
+  return (
+    <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+      <CustomSelect value={h} onChange={e => onChange({ target:{ value:`${e.target.value}:${m}` }})} style={{ width:72 }}>
+        {hours.map(hh => <option key={hh} value={hh}>{hh}</option>)}
+      </CustomSelect>
+      <span style={{ fontSize:13, color:'#888' }}>:</span>
+      <CustomSelect value={m} onChange={e => onChange({ target:{ value:`${h}:${e.target.value}` }})} style={{ width:60 }}>
+        {mins.map(mm => <option key={mm} value={mm}>{mm}</option>)}
+      </CustomSelect>
     </div>
   )
 }
@@ -1234,11 +1256,9 @@ export default function Admin() {
                     return (
                       <div key={def.type} style={{ display:'flex', gap:10, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
                         <span style={{ fontSize:13, fontWeight:'bold', color:'#555', width:52, flexShrink:0 }}>{def.label}</span>
-                        <input type="time" value={tr.start} onChange={e=>setSettings(s=>{ const a=[...(s.timeRanges||defTimeRanges)]; a[i]={...a[i],start:e.target.value}; return {...s,timeRanges:a} })}
-                          style={{ ...iStyle, width:110 }} />
+                        <TimeSelect value={tr.start} onChange={e=>setSettings(s=>{ const a=[...(s.timeRanges||defTimeRanges)]; a[i]={...a[i],start:e.target.value}; return {...s,timeRanges:a} })} />
                         <span style={{ fontSize:13, color:'#888' }}>〜</span>
-                        <input type="time" value={tr.end} onChange={e=>setSettings(s=>{ const a=[...(s.timeRanges||defTimeRanges)]; a[i]={...a[i],end:e.target.value}; return {...s,timeRanges:a} })}
-                          style={{ ...iStyle, width:110 }} />
+                        <TimeSelect value={tr.end} onChange={e=>setSettings(s=>{ const a=[...(s.timeRanges||defTimeRanges)]; a[i]={...a[i],end:e.target.value}; return {...s,timeRanges:a} })} />
                       </div>
                     )
                   })}
@@ -1271,8 +1291,7 @@ export default function Admin() {
                               </div>
                             </td>
                             <td style={{ padding:'6px 8px' }}>
-                              <input type="time" value={rule.time} style={{ ...iStyle, width:110, padding:'5px 8px', fontSize:12 }}
-                                onChange={e=>setSettings(s=>({...s, cutoffRules:{...s.cutoffRules, [key]:{...rule, time:e.target.value}}}))} />
+                              <TimeSelect value={rule.time} onChange={e=>setSettings(s=>({...s, cutoffRules:{...s.cutoffRules, [key]:{...rule, time:e.target.value}}}))} />
                             </td>
                           </tr>
                         )
