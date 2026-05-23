@@ -1498,7 +1498,7 @@ export default function Admin() {
 
       </div>} {/* end authed */}
 
-      <style jsx global>{`* { box-sizing:border-box; margin:0; padding:0; } html, body { height:100%; overflow:hidden; } body { font-family:-apple-system,'Hiragino Sans',sans-serif; background:#f5f5f5; }`}</style>
+      <style jsx global>{`* { box-sizing:border-box; margin:0; padding:0; } body { font-family:-apple-system,'Hiragino Sans',sans-serif; background:#f5f5f5; }`}</style>
     </>
   )
 }
