@@ -200,6 +200,7 @@ export default function Home() {
   const [calMonth,         setCalMonth]         = useState(new Date().getMonth())
   const [monthAvail,       setMonthAvail]       = useState({})
   const [monthAvailLoading,setMonthAvailLoading]= useState(false)
+  const monthAvailCacheRef = useRef({})
 
   // 予約フォーム
   const [selDate, setSelDate] = useState('')
@@ -238,10 +239,28 @@ export default function Home() {
 
   // ===== 月別空席取得 =====
   async function fetchMonthAvail(year, month) {
+    const cacheKey = `${year}-${month}`
+    if (monthAvailCacheRef.current[cacheKey]) {
+      setMonthAvail(monthAvailCacheRef.current[cacheKey])
+      return
+    }
     setMonthAvailLoading(true)
     try {
       const r = await api.getMonthAvailability(year, month + 1)
-      setMonthAvail(r.dates || {})
+      const dates = r.dates || {}
+      monthAvailCacheRef.current[cacheKey] = dates
+      setMonthAvail(dates)
+      // Silently preload adjacent months
+      ;[-1, 1].forEach(delta => {
+        let pm = month + delta, py = year
+        if (pm < 0) { pm = 11; py-- }
+        if (pm > 11) { pm = 0; py++ }
+        const key = `${py}-${pm}`
+        if (monthAvailCacheRef.current[key] !== undefined) return
+        api.getMonthAvailability(py, pm + 1).then(rr => {
+          if (monthAvailCacheRef.current[key] === undefined) monthAvailCacheRef.current[key] = rr.dates || {}
+        }).catch(() => {})
+      })
     } catch { setMonthAvail({}) }
     setMonthAvailLoading(false)
   }
@@ -664,8 +683,8 @@ export default function Home() {
             <div className="card-body">
               <div className="g-row">
                 {[1, 2, 3, 4, 5].map((n) => {
-                  const disabled = guestDisabled(n)
-                  const isOccupied = avail && !availLoading && disabled
+                  const disabled = guestDisabled(n) || monthAvailLoading
+                  const isOccupied = avail && !availLoading && !monthAvailLoading && disabled
                   return (
                     <button
                       key={n}
@@ -688,8 +707,8 @@ export default function Home() {
 
               {/* 貸切 6〜8名 */}
               <button
-                className={`g-btn-k${selGuest === 'kasshiki' ? ' sel' : ''}${kasshikiDisabled() ? ' dis' : ''}`}
-                disabled={kasshikiDisabled()}
+                className={`g-btn-k${selGuest === 'kasshiki' ? ' sel' : ''}${kasshikiDisabled() || monthAvailLoading ? ' dis' : ''}`}
+                disabled={kasshikiDisabled() || monthAvailLoading}
                 onClick={() => {
                   if (kasshikiDisabled()) return
                   setSelGuest('kasshiki')
@@ -721,8 +740,8 @@ export default function Home() {
 
               {/* 貸切要相談 9〜12名 */}
               <button
-                className={`g-btn-k konsult${selGuest === 'konsult' ? ' sel' : ''}${konsultDisabled() ? ' dis' : ''}`}
-                disabled={konsultDisabled()}
+                className={`g-btn-k konsult${selGuest === 'konsult' ? ' sel' : ''}${konsultDisabled() || monthAvailLoading ? ' dis' : ''}`}
+                disabled={konsultDisabled() || monthAvailLoading}
                 onClick={() => {
                   if (konsultDisabled()) return
                   setSelGuest('konsult')

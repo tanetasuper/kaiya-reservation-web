@@ -103,7 +103,6 @@ const iStyle = {
 }
 const sStyle = {
   ...iStyle, cursor:'pointer',
-  appearance:'auto', WebkitAppearance:'auto', MozAppearance:'auto',
 }
 const btnGreen  = { padding:'9px 20px', background:'#06c755', color:'#fff', border:'none', borderRadius:8, fontSize:14, fontWeight:'bold', cursor:'pointer' }
 const btnGray   = { padding:'9px 16px', background:'#f0f0f0', color:'#666', border:'none', borderRadius:8, fontSize:13, cursor:'pointer' }
@@ -380,6 +379,7 @@ export default function Admin() {
   const defCutoffRules = { '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff, '3':defCutoff, '4':defCutoff, '5':defCutoff, '6':{ daysBefore:2, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' } }
   const defTimeRanges = [{ type:'lunch', label:'ランチ', start:'11:30', end:'14:00' }, { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' }]
   const [settings, setSettings] = useState({ maxSeats:8, courses:[], timeRanges: defTimeRanges, cutoffRules: defCutoffRules, bookingNotes:'' })
+  const resCacheRef = useRef({})
   const [settingsLoading,setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving]  = useState(false)
   const [editCourseIdx,  setEditCourseIdx]   = useState(-1)
@@ -392,10 +392,13 @@ export default function Admin() {
   const [pwNew,       setPwNew]       = useState('')
   const [pwMsg,       setPwMsg]       = useState({ text:'', ok:true })
   const [pwChanging,  setPwChanging]  = useState(false)
-  const [rcCurrent,   setRcCurrent]   = useState('')
-  const [rcNew,       setRcNew]       = useState('')
-  const [rcMsg,       setRcMsg]       = useState({ text:'', ok:true })
-  const [rcChanging,  setRcChanging]  = useState(false)
+  const [rcCurrent,        setRcCurrent]        = useState('')
+  const [qaQuestion,       setQaQuestion]       = useState('')
+  const [qaAnswer,         setQaAnswer]         = useState('')
+  const [rcMsg,            setRcMsg]            = useState({ text:'', ok:true })
+  const [rcChanging,       setRcChanging]       = useState(false)
+  const [recoveryQuestion, setRecoveryQuestion] = useState('')
+  const [loadingQuestion,  setLoadingQuestion]  = useState(false)
 
   // ── Data management ────
   const [custData,       setCustData]       = useState(null)
@@ -440,7 +443,7 @@ export default function Admin() {
   }
 
   async function doRecovery() {
-    if (!recoveryCode.trim()) return setRecoveryMsg({ text:'リカバリーコードを入力してください', ok:false })
+    if (!recoveryCode.trim()) return setRecoveryMsg({ text:'合言葉の答えを入力してください', ok:false })
     setRecovering(true)
     setRecoveryMsg({ text:'', ok:true })
     try {
@@ -451,7 +454,7 @@ export default function Admin() {
         setLoginPw('')
         setRecoveryCode('')
       } else {
-        setRecoveryMsg({ text: r.error || 'リカバリーコードが正しくありません', ok:false })
+        setRecoveryMsg({ text: r.error || '答えが正しくありません', ok:false })
       }
     } catch { setRecoveryMsg({ text:'通信エラーが発生しました', ok:false }) }
     setRecovering(false)
@@ -481,19 +484,51 @@ export default function Admin() {
 
   // ── Data loaders ────────────────────────────────────────────────
   async function loadReservations() {
-    setResLoading(true)
     const y = calYear, m = calMonth
+    const cacheKey = `${y}-${m}`
     const pad = n => String(n).padStart(2,'0')
     const lastD = new Date(y, m+1, 0).getDate()
     const filter = {
       dateFrom: `${y}/${pad(m+1)}/01`,
       dateTo:   `${y}/${pad(m+1)}/${pad(lastD)}`,
     }
+    if (resCacheRef.current[cacheKey]) {
+      setReservations(resCacheRef.current[cacheKey])
+      return
+    }
+    setResLoading(true)
     try {
       const r = await api.adminGetReservations(filter)
-      setReservations(r.list || [])
+      const list = r.list || []
+      resCacheRef.current[cacheKey] = list
+      setReservations(list)
+      // Silently preload adjacent months
+      ;[-1, 1].forEach(delta => {
+        let pm = m + delta, py = y
+        if (pm < 0) { pm = 11; py-- }
+        if (pm > 11) { pm = 0; py++ }
+        const key = `${py}-${pm}`
+        if (resCacheRef.current[key] !== undefined) return
+        const ld = new Date(py, pm+1, 0).getDate()
+        api.adminGetReservations({ dateFrom:`${py}/${pad(pm+1)}/01`, dateTo:`${py}/${pad(pm+1)}/${pad(ld)}` })
+          .then(rr => { if (resCacheRef.current[key] === undefined) resCacheRef.current[key] = rr.list || [] })
+          .catch(() => {})
+      })
     } catch { setReservations([]) }
     setResLoading(false)
+  }
+
+  function refreshRes() {
+    delete resCacheRef.current[`${calYear}-${calMonth}`]
+    loadReservations()
+  }
+
+  async function doRefreshAll() {
+    resCacheRef.current = {}
+    loadReservations()
+    loadBlocked()
+    loadSeatBlocks()
+    loadNotifications()
   }
 
   async function loadBlocked() {
@@ -544,7 +579,7 @@ export default function Admin() {
     setCancelingResId(id)
     try {
       const r = await api.adminUpdateReservation({ id, status: 'キャンセル' })
-      if (r.success) { showToast('キャンセルしました'); loadReservations() }
+      if (r.success) { showToast('キャンセルしました'); refreshRes() }
       else showToast(r.error||'キャンセルに失敗しました','error')
     } catch { showToast('通信エラー','error') }
     setCancelingResId(null)
@@ -554,7 +589,7 @@ export default function Admin() {
     setCancelingResId(id)
     try {
       const r = await api.adminDeleteReservation(id)
-      if (r.success) { showToast('削除しました'); loadReservations() }
+      if (r.success) { showToast('削除しました'); refreshRes() }
       else showToast(r.error||'削除に失敗しました','error')
     } catch { showToast('通信エラー','error') }
     setCancelingResId(null)
@@ -719,17 +754,36 @@ export default function Admin() {
               style={{ width:'100%', padding:15, background:'#06c755', color:'#fff', border:'none', borderRadius:10, fontSize:15, fontWeight:'bold', cursor:'pointer', opacity:loggingIn?0.7:1 }}>
               {loggingIn ? 'ログイン中...' : 'ログイン'}
             </button>
-            <button onClick={() => { setShowRecovery(r=>!r); setRecoveryMsg({text:'',ok:true}); setRecoveryCode('') }}
-              style={{ marginTop:12, background:'none', border:'none', color:'#aaa', fontSize:12, cursor:'pointer', textDecoration:'underline', width:'100%' }}>
+            <button onClick={async () => {
+              const next = !showRecovery
+              setShowRecovery(next)
+              setRecoveryMsg({text:'',ok:true})
+              setRecoveryCode('')
+              if (next && !recoveryQuestion) {
+                setLoadingQuestion(true)
+                try {
+                  const r = await api.getRecoveryQuestion()
+                  setRecoveryQuestion(r.question || '合言葉の答えを入力してください')
+                } catch { setRecoveryQuestion('合言葉の答えを入力してください') }
+                setLoadingQuestion(false)
+              }
+            }} style={{ marginTop:12, background:'none', border:'none', color:'#aaa', fontSize:12, cursor:'pointer', textDecoration:'underline', width:'100%' }}>
               パスワードを忘れた方はこちら
             </button>
             {showRecovery && (
               <div style={{ marginTop:12, padding:14, background:'#f5f5f5', borderRadius:10 }}>
                 <p style={{ fontSize:12, color:'#555', marginBottom:10, lineHeight:1.6 }}>
-                  リカバリーコードを入力するとパスワードを「MV」にリセットします。<br />
-                  リカバリーコードは管理画面の設定で変更できます。
+                  秘密の合言葉でパスワードを「MV」にリセットします。<br />
+                  合言葉は管理画面の設定 → パスワード変更から変更できます。
                 </p>
-                <input type="text" value={recoveryCode} placeholder="リカバリーコード"
+                {loadingQuestion ? (
+                  <div style={{ fontSize:12, color:'#aaa', marginBottom:8 }}>読み込み中...</div>
+                ) : recoveryQuestion ? (
+                  <div style={{ fontSize:13, fontWeight:'bold', color:'#333', marginBottom:8, padding:'8px 12px', background:'#fff', borderRadius:8, border:'1px solid #e0e0e0' }}>
+                    Q: {recoveryQuestion}
+                  </div>
+                ) : null}
+                <input type="text" value={recoveryCode} placeholder="答えを入力"
                   style={{ ...iStyle, marginBottom:8 }}
                   onChange={e => { setRecoveryCode(e.target.value); setRecoveryMsg({text:'',ok:true}) }}
                   onKeyDown={e => e.key==='Enter' && doRecovery()} />
@@ -754,12 +808,12 @@ export default function Admin() {
       {authed && <>
 
       {/* Header */}
-      <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', position:'sticky', top:0, zIndex:10 }}>
+      <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', position:'fixed', top:0, left:0, width:'100%', zIndex:10 }}>
         <h1 style={{ fontSize:16, fontWeight:'bold', color:'#fff' }}>貝屋和光 管理画面</h1>
         <div style={{ display:'flex', gap:8 }}>
-          <button onClick={loadReservations}
+          <button onClick={doRefreshAll}
             style={{ background:'rgba(255,255,255,.2)', border:'none', color:'#fff', padding:'6px 14px', borderRadius:6, fontSize:12, cursor:'pointer' }}>
-            更新
+            データ更新
           </button>
           <button onClick={doLogout}
             style={{ background:'rgba(255,255,255,.15)', border:'1px solid rgba(255,255,255,.4)', color:'#fff', padding:'6px 14px', borderRadius:6, fontSize:12, cursor:'pointer' }}>
@@ -769,7 +823,7 @@ export default function Admin() {
       </div>
 
       {/* Tabs */}
-      <div style={{ background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex', position:'sticky', top:48, zIndex:9 }}>
+      <div style={{ background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex', position:'fixed', top:54, left:0, width:'100%', zIndex:9 }}>
         {[['reservations','予約一覧'], ['notifications','通知'], ['settings','設定']].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{
@@ -790,11 +844,31 @@ export default function Admin() {
         ))}
       </div>
 
-      <div style={{ padding:16, maxWidth:960, margin:'0 auto' }}>
+      <div style={{ paddingTop:100, paddingLeft:16, paddingRight:16, paddingBottom:16, maxWidth:960, margin:'0 auto' }}>
 
         {/* ─── TAB: 予約一覧 ──────────────────────────────────────── */}
         {tab==='reservations' && (
           <>
+            {/* Today's summary */}
+            {!resLoading && calYear === new Date().getFullYear() && calMonth === new Date().getMonth() && (() => {
+              const now = new Date()
+              const todayYMD = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`
+              const todayList = reservations.filter(r => r.date === todayYMD && r.status === '確定')
+              if (todayList.length === 0) return null
+              const todayG = todayList.reduce((s,r) => s + (parseInt(r.guests)||0), 0)
+              return (
+                <div style={{ background:'#e8f5e9', border:'1px solid #c8e6c9', borderRadius:10, padding:'12px 16px', marginBottom:12, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div>
+                    <div style={{ fontSize:11, color:'#555' }}>本日の確定予約</div>
+                    <div style={{ fontSize:16, fontWeight:'bold', color:'#2e7d32', marginTop:2 }}>{todayList.length}組 / {todayG}名</div>
+                  </div>
+                  <button onClick={() => { setSelectedDate(todayYMD); setShowSeatForm(false) }} style={{ ...btnGreen, fontSize:12, padding:'7px 14px' }}>
+                    詳細
+                  </button>
+                </div>
+              )
+            })()}
+
             {/* Calendar */}
             <div style={{ background:'#fff', borderRadius:12, padding:16, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
               <CalNav year={calYear} month={calMonth}
@@ -811,6 +885,25 @@ export default function Admin() {
                 <span><span style={{ display:'inline-block', width:10, height:10, background:'#fff3e0', borderRadius:2, marginRight:3 }}></span>停止枠あり</span>
                 <span><span style={{ display:'inline-block', width:10, height:10, background:'#ffebee', borderRadius:2, marginRight:3 }}></span>休業日</span>
               </div>
+              {!resLoading && reservations.length > 0 && (() => {
+                const confirmed = reservations.filter(r => r.status === '確定')
+                const cancelled = reservations.filter(r => r.status === 'キャンセル')
+                const totalGuests = confirmed.reduce((s,r) => s + (parseInt(r.guests)||0), 0)
+                return (
+                  <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
+                    <div style={{ background:'#e8f5e9', borderRadius:8, padding:'7px 14px', fontSize:12, display:'flex', gap:6, alignItems:'center' }}>
+                      <span style={{ color:'#888' }}>今月確定</span>
+                      <span style={{ fontWeight:'bold', color:'#2e7d32' }}>{confirmed.length}件 / {totalGuests}名</span>
+                    </div>
+                    {cancelled.length > 0 && (
+                      <div style={{ background:'#ffebee', borderRadius:8, padding:'7px 14px', fontSize:12, display:'flex', gap:6, alignItems:'center' }}>
+                        <span style={{ color:'#888' }}>キャンセル</span>
+                        <span style={{ fontWeight:'bold', color:'#c62828' }}>{cancelled.length}件</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
 
             {/* Day detail */}
@@ -1261,17 +1354,20 @@ export default function Admin() {
                     {pwChanging?'変更中...':'パスワードを変更する'}
                   </button>
                   <div style={{ marginTop:20, paddingTop:16, borderTop:'1px solid #f0f0f0' }}>
-                    <div style={{ fontSize:13, fontWeight:'bold', marginBottom:10, color:'#555' }}>リカバリーコードの変更</div>
+                    <div style={{ fontSize:13, fontWeight:'bold', marginBottom:10, color:'#555' }}>秘密の合言葉の変更</div>
                     <p style={{ fontSize:12, color:'#888', marginBottom:10, lineHeight:1.6 }}>
-                      パスワードを忘れた際にリセットに使うコードです。ログイン画面の「パスワードを忘れた方はこちら」から使います。<br />
-                      初期値：KAIYA
+                      パスワードを忘れた際のリセットに使う「秘密の質問と答え」です。<br />
+                      初期設定：質問「カイヤ貝屋の合言葉は？」 / 答え「KAIYA」
                     </p>
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+                    <div style={{ display:'grid', gap:10, marginBottom:10 }}>
                       <Field label="現在のパスワード（確認）">
                         <input type="password" value={rcCurrent} style={iStyle} onChange={e=>{ setRcCurrent(e.target.value); setRcMsg({text:'',ok:true}) }} />
                       </Field>
-                      <Field label="新しいリカバリーコード">
-                        <input type="text" value={rcNew} placeholder="2文字以上" style={iStyle} onChange={e=>{ setRcNew(e.target.value); setRcMsg({text:'',ok:true}) }} />
+                      <Field label="新しい質問文">
+                        <input type="text" value={qaQuestion} placeholder="例：好きな食べ物は？" style={iStyle} onChange={e=>{ setQaQuestion(e.target.value); setRcMsg({text:'',ok:true}) }} />
+                      </Field>
+                      <Field label="新しい答え">
+                        <input type="text" value={qaAnswer} placeholder="例：貝" style={iStyle} onChange={e=>{ setQaAnswer(e.target.value); setRcMsg({text:'',ok:true}) }} />
                       </Field>
                     </div>
                     {rcMsg.text && (
@@ -1284,13 +1380,13 @@ export default function Admin() {
                     <button disabled={rcChanging} onClick={async () => {
                       setRcChanging(true); setRcMsg({text:'',ok:true})
                       try {
-                        const r = await api.changeRecoveryCode(rcCurrent, rcNew)
-                        if (r.success) { setRcMsg({text:'リカバリーコードを変更しました',ok:true}); setRcCurrent(''); setRcNew('') }
+                        const r = await api.changeRecoveryQA(rcCurrent, qaQuestion, qaAnswer)
+                        if (r.success) { setRcMsg({text:'秘密の合言葉を変更しました',ok:true}); setRcCurrent(''); setQaQuestion(''); setQaAnswer('') }
                         else setRcMsg({text:r.error||'変更に失敗しました',ok:false})
                       } catch { setRcMsg({text:'通信エラー',ok:false}) }
                       setRcChanging(false)
                     }} style={{ ...btnGray, fontSize:13 }}>
-                      {rcChanging?'変更中...':'リカバリーコードを変更する'}
+                      {rcChanging?'変更中...':'合言葉を変更する'}
                     </button>
                   </div>
                 </div>
@@ -1391,14 +1487,14 @@ export default function Admin() {
       {editRes && (
         <EditModal res={editRes}
           onClose={() => setEditRes(null)}
-          onSaved={() => { setEditRes(null); loadReservations() }}
+          onSaved={() => { setEditRes(null); refreshRes() }}
           showToast={showToast}
           timeSlots={adminTimeSlots} />
       )}
       {showAddModal && (
         <AddModal initialDate={addInitDate}
           onClose={() => setShowAddModal(false)}
-          onAdded={() => { setShowAddModal(false); loadReservations() }}
+          onAdded={() => { setShowAddModal(false); refreshRes() }}
           showToast={showToast}
           timeSlots={adminTimeSlots} />
       )}
