@@ -87,6 +87,75 @@ function Toast({ msg, type }) {
     }}>{msg}</div>
   )
 }
+function CustomSelect({ value, onChange, children, style }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const [pos, setPos] = useState({ top:0, left:0, width:0 })
+
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    window.addEventListener('scroll', close, true)
+    return () => window.removeEventListener('scroll', close, true)
+  }, [open])
+
+  const opts = [children].flat(Infinity).filter(c => c && c.props).map(c => ({
+    val: c.props.value !== undefined ? String(c.props.value) : String(c.props.children ?? ''),
+    label: String(c.props.children ?? ''),
+  }))
+  const curVal = String(value ?? '')
+  const displayLabel = opts.find(o => o.val === curVal)?.label ?? curVal
+
+  function handleOpen() {
+    if (ref.current) {
+      const r = ref.current.getBoundingClientRect()
+      setPos({ top: r.bottom, left: r.left, width: r.width })
+    }
+    setOpen(v => !v)
+  }
+
+  return (
+    <div style={{ position:'relative' }}>
+      <div ref={ref} onClick={handleOpen}
+        style={{
+          width:'100%', padding:'9px 12px',
+          border:'1.5px solid #e0e0e0', borderRadius:8,
+          fontSize:14, background:'#fafafa', fontFamily:'inherit',
+          boxSizing:'border-box', cursor:'pointer',
+          display:'flex', justifyContent:'space-between', alignItems:'center',
+          ...style,
+        }}>
+        <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {displayLabel}
+        </span>
+        <span style={{ fontSize:10, color:'#888', marginLeft:6, flexShrink:0 }}>▼</span>
+      </div>
+      {open && <>
+        <div style={{ position:'fixed', inset:0, zIndex:1998 }} onClick={() => setOpen(false)} />
+        <div style={{
+          position:'fixed', top:pos.top, left:pos.left, width:pos.width,
+          zIndex:1999, background:'#fff',
+          border:'1.5px solid #e0e0e0', borderRadius:8,
+          boxShadow:'0 4px 16px rgba(0,0,0,.18)',
+          maxHeight:220, overflowY:'auto',
+        }}>
+          {opts.map((opt, i) => (
+            <div key={i} onClick={() => { onChange({ target:{ value: opt.val } }); setOpen(false) }}
+              style={{
+                padding:'11px 14px', fontSize:14, cursor:'pointer',
+                background: opt.val === curVal ? '#e8f5e9' : '#fff',
+                color: opt.val === curVal ? '#2e7d32' : '#333',
+                borderBottom: i < opts.length-1 ? '1px solid #f0f0f0' : 'none',
+              }}>
+              {opt.label}
+            </div>
+          ))}
+        </div>
+      </>}
+    </div>
+  )
+}
+
 function Field({ label, children, span }) {
   return (
     <div style={span ? { gridColumn:'1/-1' } : {}}>
@@ -210,24 +279,24 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots }) {
           <Field label="電話番号"><input type="tel"  value={data.phone}  style={iStyle} onChange={set('phone')}  /></Field>
           <Field label="来店日"> <input type="date"  value={data.date}   style={iStyle} onChange={set('date')}   /></Field>
           <Field label="時間">
-            <select value={data.time} style={sStyle} onChange={set('time')}>
+            <CustomSelect value={data.time} style={sStyle} onChange={set('time')}>
               {(timeSlots || TIME_SLOTS).map(s => <option key={s}>{s}</option>)}
-            </select>
+            </CustomSelect>
           </Field>
           <Field label="人数">
-            <select value={data.guests} style={sStyle} onChange={set('guests')}>
+            <CustomSelect value={data.guests} style={sStyle} onChange={set('guests')}>
               {GUESTS.map(n => <option key={n}>{n}</option>)}
-            </select>
+            </CustomSelect>
           </Field>
           <Field label="ステータス">
-            <select value={data.status} style={sStyle} onChange={set('status')}>
+            <CustomSelect value={data.status} style={sStyle} onChange={set('status')}>
               {STATUSES.map(s => <option key={s}>{s}</option>)}
-            </select>
+            </CustomSelect>
           </Field>
           <Field label="経路">
-            <select value={data.source} style={sStyle} onChange={set('source')}>
+            <CustomSelect value={data.source} style={sStyle} onChange={set('source')}>
               {SOURCES.map(s => <option key={s}>{s}</option>)}
-            </select>
+            </CustomSelect>
           </Field>
           <Field label="メモ"><input type="text" value={data.notes} style={iStyle} onChange={set('notes')} /></Field>
         </div>
@@ -285,22 +354,22 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots }) {
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
           <Field label="来店日 *">  <input type="date" value={data.date} style={iStyle} onChange={set('date')} /></Field>
           <Field label="時間 *">
-            <select value={data.time} style={sStyle} onChange={set('time')}>
+            <CustomSelect value={data.time} style={sStyle} onChange={set('time')}>
               <option value="">-- 選択 --</option>
               {(timeSlots || TIME_SLOTS).map(s => <option key={s}>{s}</option>)}
-            </select>
+            </CustomSelect>
           </Field>
           <Field label="お名前 *">   <input type="text" value={data.name}  placeholder="山田 太郎"       style={iStyle} onChange={set('name')}  /></Field>
           <Field label="電話番号 *"> <input type="tel"  value={data.phone} placeholder="090-0000-0000"   style={iStyle} onChange={set('phone')} /></Field>
           <Field label="人数">
-            <select value={data.guests} style={sStyle} onChange={set('guests')}>
+            <CustomSelect value={data.guests} style={sStyle} onChange={set('guests')}>
               {GUESTS.map(n => <option key={n}>{n}</option>)}
-            </select>
+            </CustomSelect>
           </Field>
           <Field label="経路">
-            <select value={data.source} style={sStyle} onChange={set('source')}>
+            <CustomSelect value={data.source} style={sStyle} onChange={set('source')}>
               {SOURCES.map(s => <option key={s}>{s}</option>)}
-            </select>
+            </CustomSelect>
           </Field>
           <Field label="LINE UserID（任意）" span>
             <input type="text" value={data.lineUserId} placeholder="Uxxxxxxxx..." style={iStyle}
@@ -992,11 +1061,11 @@ export default function Admin() {
                     <div style={{ fontSize:12, fontWeight:'bold', color:'#e65100', marginBottom:8 }}>受付停止席</div>
                     <div style={{ display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
                       <Field label="停止席数">
-                        <select value={seatInput.seats}
+                        <CustomSelect value={seatInput.seats}
                           onChange={e => setSeatInput(s=>({...s, seats:parseInt(e.target.value)||1}))}
                           style={{ ...sStyle, width:90 }}>
                           {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}席</option>)}
-                        </select>
+                        </CustomSelect>
                       </Field>
                       <Field label="理由（任意）">
                         <input type="text" value={seatInput.reason} placeholder="個室使用など"
@@ -1018,11 +1087,11 @@ export default function Admin() {
                     <div style={{ fontSize:12, fontWeight:'bold', color:'#e65100', marginBottom:8 }}>受付停止席を設定</div>
                     <div style={{ display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
                       <Field label="停止席数">
-                        <select value={seatInput.seats}
+                        <CustomSelect value={seatInput.seats}
                           onChange={e => setSeatInput(s=>({...s, seats:parseInt(e.target.value)||1}))}
                           style={{ ...sStyle, width:90 }}>
                           {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}席</option>)}
-                        </select>
+                        </CustomSelect>
                       </Field>
                       <Field label="理由（任意）">
                         <input type="text" value={seatInput.reason} placeholder="個室使用など"
@@ -1148,11 +1217,11 @@ export default function Admin() {
                   <div style={{ display:'flex', flexWrap:'wrap', gap:20, alignItems:'center' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                       <label style={{ fontSize:13, color:'#555', whiteSpace:'nowrap' }}>最大席数</label>
-                      <select value={settings.maxSeats}
+                      <CustomSelect value={settings.maxSeats}
                         onChange={e => setSettings(s=>({...s, maxSeats:parseInt(e.target.value)||8}))}
                         style={{ ...sStyle, width:90 }}>
                         {[1,2,3,4,5,6,7,8,9,10,11,12].map(n=><option key={n} value={n}>{n}名</option>)}
-                      </select>
+                      </CustomSelect>
                     </div>
                   </div>
                 </div>
@@ -1195,10 +1264,10 @@ export default function Admin() {
                             <td style={{ padding:'8px 8px', fontWeight:'bold', color: key==='0'||key==='6'||key==='holiday' ? '#e53935' : '#333' }}>{label}</td>
                             <td style={{ padding:'6px 8px' }}>
                               <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                                <select value={rule.daysBefore} style={{ ...sStyle, width:65, padding:'5px 6px', fontSize:12 }}
+                                <CustomSelect value={rule.daysBefore} style={{ ...sStyle, width:65, padding:'5px 6px', fontSize:12 }}
                                   onChange={e=>setSettings(s=>({...s, cutoffRules:{...s.cutoffRules, [key]:{...rule, daysBefore:parseInt(e.target.value)||1}}}))} >
                                   {[1,2,3,4,5,6,7].map(n=><option key={n} value={n}>{n}日前</option>)}
-                                </select>
+                                </CustomSelect>
                               </div>
                             </td>
                             <td style={{ padding:'6px 8px' }}>
@@ -1227,11 +1296,11 @@ export default function Admin() {
                             <Field label="説明文" span><input type="text" value={editCourse.description} style={iStyle} onChange={e=>setEditCourse(c=>({...c,description:e.target.value}))} /></Field>
                             <Field label="所要時間（分）"><input type="number" value={editCourse.duration} style={iStyle} onChange={e=>setEditCourse(c=>({...c,duration:parseInt(e.target.value)||0}))} /></Field>
                             <Field label="食事タイプ">
-                              <select value={editCourse.mealType||'dinner'} style={sStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
+                              <CustomSelect value={editCourse.mealType||'dinner'} style={sStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
                                 <option value="lunch">ランチ</option>
                                 <option value="dinner">ディナー</option>
                                 <option value="both">共通</option>
-                              </select>
+                              </CustomSelect>
                             </Field>
                             <div style={{ gridColumn:'1/-1', display:'flex', gap:8, marginTop:4 }}>
                               <button onClick={() => { const cs=[...settings.courses]; cs[idx]={...editCourse}; setSettings(s=>({...s,courses:cs})); setEditCourseIdx(-1) }}
@@ -1281,11 +1350,11 @@ export default function Admin() {
                         <Field label="説明文" span><input type="text" value={newCourse.description} placeholder="旬の貝と野菜をふんだんに使ったコースメニュー" style={iStyle} onChange={e=>setNewCourse(c=>({...c,description:e.target.value}))} /></Field>
                         <Field label="所要時間（分）"><input type="number" value={newCourse.duration} placeholder="150" style={iStyle} onChange={e=>setNewCourse(c=>({...c,duration:e.target.value}))} /></Field>
                         <Field label="食事タイプ">
-                          <select value={newCourse.mealType||'dinner'} style={sStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
+                          <CustomSelect value={newCourse.mealType||'dinner'} style={sStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
                             <option value="lunch">ランチ</option>
                             <option value="dinner">ディナー</option>
                             <option value="both">共通</option>
-                          </select>
+                          </CustomSelect>
                         </Field>
                         <div style={{ gridColumn:'1/-1', display:'flex', gap:8, marginTop:4 }}>
                           <button onClick={() => {
