@@ -92,12 +92,6 @@ function CustomSelect({ value, onChange, children, style }) {
   const ref = useRef(null)
   const [pos, setPos] = useState({ top:0, left:0, width:0 })
 
-  useEffect(() => {
-    if (!open) return
-    const close = () => setOpen(false)
-    window.addEventListener('scroll', close, true)
-    return () => window.removeEventListener('scroll', close, true)
-  }, [open])
 
   const opts = [children].flat(Infinity).filter(c => c && c.props).map(c => ({
     val: c.props.value !== undefined ? String(c.props.value) : String(c.props.children ?? ''),
