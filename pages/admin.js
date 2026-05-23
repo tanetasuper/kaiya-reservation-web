@@ -728,7 +728,10 @@ export default function Admin() {
   // ── Main ──────────────────────────────────────────────────────
   return (
     <>
-      <Head><title>管理画面 | 貝屋和光</title></Head>
+      <Head>
+        <title>管理画面 | 貝屋和光</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+      </Head>
       <Script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" strategy="lazyOnload" />
 
       {/* Login screen */}
