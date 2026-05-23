@@ -805,10 +805,13 @@ export default function Admin() {
       )}
 
       {/* Main admin (only shown when authed) */}
-      {authed && <div style={{ display:'flex', flexDirection:'column', height:'100vh' }}>
+      {authed && <>
+
+      {/* Sticky header + tabs */}
+      <div style={{ position:'sticky', top:0, zIndex:1 }}>
 
       {/* Header */}
-      <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+      <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <h1 style={{ fontSize:16, fontWeight:'bold', color:'#fff' }}>貝屋和光 管理画面</h1>
         <div style={{ display:'flex', gap:8 }}>
           <button onClick={doLogout}
@@ -819,7 +822,7 @@ export default function Admin() {
       </div>
 
       {/* Tabs */}
-      <div style={{ background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex', flexShrink:0 }}>
+      <div style={{ background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex' }}>
         {[['reservations','予約一覧'], ['notifications','通知'], ['settings','設定']].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{
@@ -840,7 +843,8 @@ export default function Admin() {
         ))}
       </div>
 
-      <div style={{ flex:1, overflowY:'scroll', minHeight:0, WebkitOverflowScrolling:'touch' }}>
+      </div>{/* end sticky wrapper */}
+
       <div style={{ paddingTop:12, paddingLeft:16, paddingRight:16, paddingBottom:16, maxWidth:960, margin:'0 auto' }}>
 
         {/* ─── TAB: 予約一覧 ──────────────────────────────────────── */}
@@ -1476,7 +1480,6 @@ export default function Admin() {
           </div>
         )}
       </div>
-      </div>
 
       {/* Modals */}
       {editRes && (
@@ -1496,7 +1499,7 @@ export default function Admin() {
 
       <Toast msg={toast.msg} type={toast.type} />
 
-      </div>} {/* end authed */}
+      </>} {/* end authed */}
 
       <style jsx global>{`* { box-sizing:border-box; margin:0; padding:0; } body { font-family:-apple-system,'Hiragino Sans',sans-serif; background:#f5f5f5; }`}</style>
     </>
