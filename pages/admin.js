@@ -200,7 +200,7 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots }) {
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:200,
       display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}
       onClick={e => e.target===e.currentTarget && onClose()}>
-      <div style={{ background:'#fff', borderRadius:16, padding:24, width:'100%', maxWidth:520, maxHeight:'90vh', overflowY:'auto' }}>
+      <div style={{ background:'#fff', borderRadius:16, padding:24, width:'100%', maxWidth:520, maxHeight:'90vh', overflowY:'scroll', WebkitOverflowScrolling:'touch' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
           <h2 style={{ fontSize:16, fontWeight:'bold' }}>予約編集 <span style={{ fontSize:11, color:'#aaa', fontWeight:'normal' }}>{res.id}</span></h2>
           <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'#888' }}>✕</button>
@@ -277,7 +277,7 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots }) {
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:200,
       display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}
       onClick={e => e.target===e.currentTarget && onClose()}>
-      <div style={{ background:'#fff', borderRadius:16, padding:24, width:'100%', maxWidth:520, maxHeight:'90vh', overflowY:'auto' }}>
+      <div style={{ background:'#fff', borderRadius:16, padding:24, width:'100%', maxWidth:520, maxHeight:'90vh', overflowY:'scroll', WebkitOverflowScrolling:'touch' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
           <h2 style={{ fontSize:16, fontWeight:'bold' }}>新規予約登録</h2>
           <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'#888' }}>✕</button>
@@ -811,10 +811,6 @@ export default function Admin() {
       <div style={{ background:'#06c755', padding:'14px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
         <h1 style={{ fontSize:16, fontWeight:'bold', color:'#fff' }}>貝屋和光 管理画面</h1>
         <div style={{ display:'flex', gap:8 }}>
-          <button onClick={doRefreshAll}
-            style={{ background:'rgba(255,255,255,.2)', border:'none', color:'#fff', padding:'6px 14px', borderRadius:6, fontSize:12, cursor:'pointer' }}>
-            データ更新
-          </button>
           <button onClick={doLogout}
             style={{ background:'rgba(255,255,255,.15)', border:'1px solid rgba(255,255,255,.4)', color:'#fff', padding:'6px 14px', borderRadius:6, fontSize:12, cursor:'pointer' }}>
             ログアウト
@@ -844,7 +840,7 @@ export default function Admin() {
         ))}
       </div>
 
-      <div style={{ flex:1, overflowY:'auto', minHeight:0 }}>
+      <div style={{ flex:1, overflowY:'scroll', minHeight:0, WebkitOverflowScrolling:'touch' }}>
       <div style={{ paddingTop:12, paddingLeft:16, paddingRight:16, paddingBottom:16, maxWidth:960, margin:'0 auto' }}>
 
         {/* ─── TAB: 予約一覧 ──────────────────────────────────────── */}
@@ -963,9 +959,6 @@ export default function Admin() {
                             {r.notes && <div style={{ fontSize:12, color:'#888', marginTop:2 }}>メモ: {r.notes}</div>}
                           </div>
                           <div style={{ display:'flex', gap:6, flexShrink:0, alignItems:'center' }}>
-                            <span style={{ ...statusStyle(r.status), padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:'bold' }}>
-                              {r.status}
-                            </span>
                             <button onClick={() => setEditRes(r)} style={btnBlue}>編集</button>
                             <button
                               disabled={cancelingResId===r.id}
@@ -1505,7 +1498,7 @@ export default function Admin() {
 
       </div>} {/* end authed */}
 
-      <style jsx global>{`* { box-sizing:border-box; margin:0; padding:0; } body { font-family:-apple-system,'Hiragino Sans',sans-serif; background:#f5f5f5; }`}</style>
+      <style jsx global>{`* { box-sizing:border-box; margin:0; padding:0; } html, body { height:100%; overflow:hidden; } body { font-family:-apple-system,'Hiragino Sans',sans-serif; background:#f5f5f5; }`}</style>
     </>
   )
 }
