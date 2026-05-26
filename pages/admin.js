@@ -463,7 +463,13 @@ export default function Admin() {
   const defCutoff = { daysBefore:2, time:'22:00' }
   const defCutoffRules = { '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff, '3':defCutoff, '4':defCutoff, '5':defCutoff, '6':{ daysBefore:2, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' } }
   const defTimeRanges = [{ type:'lunch', label:'ランチ', start:'11:30', end:'14:00' }, { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' }]
-  const [settings, setSettings] = useState({ maxSeats:8, courses:[], timeRanges: defTimeRanges, cutoffRules: defCutoffRules, bookingNotes:'' })
+  const defDailyHours = Object.fromEntries(['0','1','2','3','4','5','6'].map(d => [d, {
+    lunchEnabled: d === '0' || d === '6',
+    lunchStart: '11:30', lunchEnd: '14:00',
+    dinnerEnabled: true,
+    dinnerStart: '17:00', dinnerEnd: '21:00',
+  }]))
+  const [settings, setSettings] = useState({ maxSeats:8, courses:[], timeRanges: defTimeRanges, dailyHours: defDailyHours, cutoffRules: defCutoffRules, bookingNotes:'' })
   const resCacheRef = useRef({})
   const [settingsLoading,setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving]  = useState(false)
@@ -651,6 +657,7 @@ export default function Admin() {
           maxSeats: r.maxSeats||8,
           courses: r.courses||[],
           timeRanges: tr,
+          dailyHours: r.dailyHours || defDailyHours,
           cutoffRules: r.cutoffRules||defCutoffRules,
           bookingNotes: r.bookingNotes||'',
         })
@@ -1244,7 +1251,7 @@ export default function Admin() {
 
                 {/* 受付可能時間帯 */}
                 <div style={{ background:'#fff', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
-                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14 }}>受付可能時間帯</h2>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14 }}>受付可能時間帯（デフォルト）</h2>
                   {defTimeRanges.map((def, i) => {
                     const tr = (settings.timeRanges||[])[i] || def
                     return (
@@ -1256,6 +1263,59 @@ export default function Admin() {
                       </div>
                     )
                   })}
+                </div>
+
+                {/* 曜日別営業時間 */}
+                <div style={{ background:'#fff', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>曜日別営業時間</h2>
+                  <div style={{ fontSize:12, color:'#888', marginBottom:14 }}>設定した曜日はデフォルトより優先されます</div>
+                  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                    <thead>
+                      <tr style={{ borderBottom:'2px solid #f0f0f0' }}>
+                        <th style={{ textAlign:'left', padding:'6px 8px', color:'#888', fontWeight:'normal', width:40 }}>曜</th>
+                        <th style={{ padding:'6px 8px', color:'#888', fontWeight:'normal' }}>ランチ</th>
+                        <th style={{ padding:'6px 8px', color:'#888', fontWeight:'normal' }}>ディナー</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[['0','日'],['1','月'],['2','火'],['3','水'],['4','木'],['5','金'],['6','土']].map(([key,label]) => {
+                        const dh = (settings.dailyHours||defDailyHours)[key] || defDailyHours[key]
+                        const setDH = (patch) => setSettings(s => ({ ...s, dailyHours: { ...(s.dailyHours||defDailyHours), [key]: { ...dh, ...patch } } }))
+                        const isDow0or6 = key==='0'||key==='6'
+                        return (
+                          <tr key={key} style={{ borderBottom:'1px solid #f0f0f0' }}>
+                            <td style={{ padding:'8px', fontWeight:'bold', color: key==='0'||key==='6' ? '#e53935' : '#333' }}>{label}</td>
+                            <td style={{ padding:'6px 4px' }}>
+                              <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                                <label style={{ display:'flex', alignItems:'center', gap:4, fontSize:12 }}>
+                                  <input type="checkbox" checked={dh.lunchEnabled} onChange={e=>setDH({lunchEnabled:e.target.checked})} />
+                                  営業
+                                </label>
+                                {dh.lunchEnabled && <>
+                                  <TimeSelect value={dh.lunchStart} onChange={e=>setDH({lunchStart:e.target.value})} />
+                                  <span style={{ fontSize:11, color:'#888' }}>〜</span>
+                                  <TimeSelect value={dh.lunchEnd} onChange={e=>setDH({lunchEnd:e.target.value})} />
+                                </>}
+                              </div>
+                            </td>
+                            <td style={{ padding:'6px 4px' }}>
+                              <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                                <label style={{ display:'flex', alignItems:'center', gap:4, fontSize:12 }}>
+                                  <input type="checkbox" checked={dh.dinnerEnabled} onChange={e=>setDH({dinnerEnabled:e.target.checked})} />
+                                  営業
+                                </label>
+                                {dh.dinnerEnabled && <>
+                                  <TimeSelect value={dh.dinnerStart} onChange={e=>setDH({dinnerStart:e.target.value})} />
+                                  <span style={{ fontSize:11, color:'#888' }}>〜</span>
+                                  <TimeSelect value={dh.dinnerEnd} onChange={e=>setDH({dinnerEnd:e.target.value})} />
+                                </>}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
 
                 {/* 受付締め切りルール */}

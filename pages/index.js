@@ -186,6 +186,7 @@ export default function Home() {
     { type:'lunch', label:'ランチ', start:'11:30', end:'14:00' },
     { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' },
   ])
+  const [settingsDailyHours, setSettingsDailyHours] = useState({})
   const [bookingNotes, setBookingNotes] = useState('')
   const [showNotesPopup, setShowNotesPopup] = useState(false)
   const defCutoff = { daysBefore:2, time:'22:00' }
@@ -205,13 +206,15 @@ export default function Home() {
   // 予約フォーム
   const [selDate, setSelDate] = useState('')
   const [selGuest, setSelGuest] = useState('')
-  const [selCount, setSelCount] = useState('')
+  const [isKasshiki, setIsKasshiki] = useState(false)
+  const [showKasshikiWarning, setShowKasshikiWarning] = useState(false)
   const [selTime, setSelTime] = useState('')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [q1, setQ1] = useState('')
-  const [q2, setQ2] = useState('')
+  const [q1Other, setQ1Other] = useState('')
   const [q3, setQ3] = useState('')
+  const [q3Other, setQ3Other] = useState('')
   const [notes, setNotes] = useState('')
   const [inputErr, setInputErr] = useState('')
   const [cfErr, setCfErr] = useState('')
@@ -233,9 +236,8 @@ export default function Home() {
   const [chgcfErr, setChgcfErr] = useState('')
   const [chgSubmitting, setChgSubmitting] = useState(false)
 
-  const isKasshiki = selGuest === 'kasshiki' || selGuest === 'konsult'
-  const effectiveGuests = isKasshiki ? selCount : selGuest
-  const showTimeCard = selDate && selGuest && (!isKasshiki || selCount)
+  const effectiveGuests = selGuest
+  const showTimeCard = selDate && (selGuest || isKasshiki)
 
   // ===== 月別空席取得 =====
   async function fetchMonthAvail(year, month) {
@@ -270,6 +272,22 @@ export default function Home() {
   const selStayMin = visibleCourses[selCourse]?.duration || STAY_MIN
   const courseTimeSlots = useMemo(() => {
     const mealType = visibleCourses[selCourse]?.mealType || 'dinner'
+    if (selDate && settingsDailyHours) {
+      const dow = parseDate(selDate).getDay()
+      const dayH = settingsDailyHours[String(dow)]
+      if (dayH) {
+        const dayRanges = []
+        if ((mealType === 'lunch' || mealType === 'both') && dayH.lunchEnabled)
+          dayRanges.push({ type:'lunch', start:dayH.lunchStart, end:dayH.lunchEnd })
+        if ((mealType === 'dinner' || mealType === 'both') && dayH.dinnerEnabled)
+          dayRanges.push({ type:'dinner', start:dayH.dinnerStart, end:dayH.dinnerEnd })
+        if (dayRanges.length > 0) {
+          const all = []
+          dayRanges.forEach(tr => generateSlots(tr).forEach(s => { if (!all.includes(s)) all.push(s) }))
+          return all.sort()
+        }
+      }
+    }
     const ranges = settingsTimeRanges.filter(tr =>
       mealType === 'both' || tr.type === mealType || tr.type === 'both'
     )
@@ -277,7 +295,7 @@ export default function Home() {
     const all = []
     ranges.forEach(tr => generateSlots(tr).forEach(s => { if (!all.includes(s)) all.push(s) }))
     return all.sort()
-  }, [visibleCourses, selCourse, settingsTimeRanges])
+  }, [visibleCourses, selCourse, settingsTimeRanges, settingsDailyHours, selDate])
 
   // ===== 締め切り計算 =====
   function getDeadline(dateStr) {
@@ -327,7 +345,7 @@ export default function Home() {
   function guestDisabled(n) {
     if (!avail || availLoading) return false
     if (n === 1) return !avail.canBook1
-    if (n >= 2 && n <= 5) return n > avail.remainingSeats
+    if (n >= 2) return n > avail.remainingSeats
     return false
   }
   function kasshikiDisabled() {
@@ -377,7 +395,8 @@ export default function Home() {
     setSelDate(d)
     setSelTime('')
     setSelGuest('')
-    setSelCount('')
+    setIsKasshiki(false)
+    setShowKasshikiWarning(false)
     setAvail(null)
     setInputErr('')
     if (d) {
@@ -443,6 +462,7 @@ export default function Home() {
       if (!r.success) return
       if (r.courses && r.courses.length > 0) { setSettingsCourses(r.courses); setSelCourse(0) }
       if (r.timeRanges && r.timeRanges.length > 0) setSettingsTimeRanges(r.timeRanges)
+      if (r.dailyHours) setSettingsDailyHours(r.dailyHours)
       if (r.cutoffRules) setSettingsCutoffRules(r.cutoffRules)
       if (r.bookingNotes) setBookingNotes(r.bookingNotes)
     }).catch(() => {})
@@ -470,13 +490,11 @@ export default function Home() {
   // ===== バリデーション =====
   function goConfirm() {
     if (!selDate) return setInputErr('ご来店日を選択してください')
-    if (!selGuest) return setInputErr('人数を選択してください')
-    if (isKasshiki && !selCount) return setInputErr('人数を選択してください')
+    if (!selGuest && !isKasshiki) return setInputErr('人数を選択してください')
     if (!selTime) return setInputErr('来店時間を選択してください')
     if (!String(name).trim()) return setInputErr('お名前を入力してください')
     if (!String(phone).trim()) return setInputErr('電話番号を入力してください')
-    // 残席チェック
-    if (avail && !isKasshiki) {
+    if (avail && !isKasshiki && selGuest) {
       const n = parseInt(selGuest) || 0
       if (n >= 2 && n > avail.remainingSeats)
         return setInputErr(`残席${avail.remainingSeats}名のため、${n}名様のご予約はお受けできません`)
@@ -497,10 +515,10 @@ export default function Home() {
     setCfErr('')
     const d = parseDate(selDate)
     const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
-    const isKonsult = selGuest === 'konsult'
-    const baseDetail = `${fmtDate(selDate)}　${selTime}〜${addMin(selTime, selStayMin)}\n${effectiveGuests}名様${isKasshiki ? '（貸切プラン）' : ''}`
-    // Optimistic UI：先に done 画面へ遷移し、API はバックグラウンドで送信
-    setDone({ detail: baseDetail, id: '', pending: true, error: '', backScreen: 'confirm', title: 'ご予約を承りました' })
+    const guestStr = effectiveGuests ? `${effectiveGuests}名様` : '人数未定'
+    const baseDetail = `${fmtDate(selDate)}　${selTime}〜${addMin(selTime, selStayMin)}\n${guestStr}${isKasshiki ? '（貸切）' : ''}`
+    const doneTitle = isKasshiki ? '貸切お申し込みを受け付けました' : 'ご予約を承りました'
+    setDone({ detail: baseDetail, id: '', pending: true, error: '', backScreen: 'confirm', title: doneTitle })
     setScreen('done')
     try {
       const r = await api.createReservation({
@@ -511,17 +529,20 @@ export default function Home() {
         phone: String(phone).trim(),
         date: dateStr,
         time: selTime,
-        guests: effectiveGuests,
+        guests: effectiveGuests || '未定',
         course: visibleCourses[selCourse]?.name || '季節の貝フルコース',
-        isKasshiki: isKasshiki && !isKonsult,
-        isKonsult,
+        isKasshiki,
+        isKonsult: false,
         notes: String(notes).trim(),
-        q1: String(q1).trim(),
-        q2: String(q2).trim(),
-        q3: String(q3).trim(),
+        q1: q1 === 'その他' ? (q1Other.trim() || 'その他') : q1,
+        q2: '',
+        q3: q3 === 'その他' ? (q3Other.trim() || 'その他') : q3,
       })
       if (r.success) {
-        setDone({ detail: baseDetail + '\n\nLINEに確認メッセージをお送りしました。', id: `予約番号：${r.reservationId}`, pending: false, error: '', backScreen: 'confirm', title: 'ご予約を承りました' })
+        const doneMsg = isKasshiki
+          ? baseDetail + '\n\n内容を確認後、ご連絡いたします。'
+          : baseDetail + '\n\nLINEに確認メッセージをお送りしました。'
+        setDone({ detail: doneMsg, id: `予約番号：${r.reservationId}`, pending: false, error: '', backScreen: 'confirm', title: doneTitle })
       } else {
         setDone(prev => ({ ...prev, pending: false, error: r.error || '予約に失敗しました' }))
       }
@@ -678,22 +699,23 @@ export default function Home() {
             <div className="card-lbl">
               👥　人数
               {availLoading && <span className="avail-loading"> 確認中...</span>}
-              {avail && !availLoading && <span className="avail-info"> 残席 {avail.remainingSeats}名</span>}
+              {avail && !availLoading && !isKasshiki && <span className="avail-info"> 残席 {avail.remainingSeats}名</span>}
             </div>
             <div className="card-body">
               <div className="g-row">
-                {[1, 2, 3, 4, 5].map((n) => {
-                  const disabled = guestDisabled(n) || monthAvailLoading
-                  const isOccupied = avail && !availLoading && !monthAvailLoading && disabled
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => {
+                  const disabled = guestDisabled(n) || monthAvailLoading || isKasshiki
+                  const isOccupied = !isKasshiki && avail && !availLoading && !monthAvailLoading && guestDisabled(n)
                   return (
                     <button
                       key={n}
-                      className={`g-btn${selGuest === String(n) ? ' sel' : ''}${disabled ? ' dis' : ''}`}
+                      className={`g-btn${selGuest === String(n) && !isKasshiki ? ' sel' : ''}${disabled ? ' dis' : ''}`}
                       disabled={disabled}
                       onClick={() => {
                         if (disabled) return
                         setSelGuest(String(n))
-                        setSelCount('')
+                        setIsKasshiki(false)
+                        setShowKasshikiWarning(false)
                         setSelTime('')
                         setInputErr('')
                       }}
@@ -705,69 +727,51 @@ export default function Home() {
                 })}
               </div>
 
-              {/* 貸切 6〜8名 */}
+              {/* 貸切ボタン */}
               <button
-                className={`g-btn-k${selGuest === 'kasshiki' ? ' sel' : ''}${kasshikiDisabled() || monthAvailLoading ? ' dis' : ''}`}
+                className={`g-btn-k${isKasshiki ? ' sel' : ''}${kasshikiDisabled() || monthAvailLoading ? ' dis' : ''}`}
                 disabled={kasshikiDisabled() || monthAvailLoading}
                 onClick={() => {
                   if (kasshikiDisabled()) return
-                  setSelGuest('kasshiki')
-                  setSelCount('')
-                  setSelTime('')
-                  setInputErr('')
+                  const n = parseInt(selGuest) || 0
+                  if (!selGuest || n < 6) {
+                    setShowKasshikiWarning(true)
+                  } else {
+                    setIsKasshiki(true)
+                    setSelTime('')
+                    setInputErr('')
+                  }
                 }}
               >
-                {kasshikiDisabled() && avail
-                  ? '🔒 貸切プラン（6〜8名）— 本日は受付不可'
-                  : '🔒 貸切プラン（6〜8名）'}
+                {kasshikiDisabled() && avail ? '🔒 貸切で予約する — 本日は受付不可' : '🔒 貸切で予約する'}
               </button>
-              {selGuest === 'kasshiki' && (
-                <div className="k-panel">
-                  <p className="k-note">
-                    ご利用日に他のご予約がない場合のみ貸切でのご案内が可能です。
-                    <br />予約確定後にスタッフよりLINEにてご連絡いたします。
-                  </p>
-                  <div className="c-row">
-                    {['6', '7', '8'].map((n) => (
-                      <button key={n} className={`c-btn${selCount === n ? ' sel' : ''}`}
-                        onClick={() => { setSelCount(n); setSelTime(''); setInputErr('') }}>
-                        {n}名
-                      </button>
-                    ))}
+
+              {/* 貸切警告 */}
+              {showKasshikiWarning && (
+                <div className="k-warning">
+                  {!selGuest && <p className="k-warning-title">人数未選択です。</p>}
+                  <p className="k-warning-body">貸切プランのご利用には<strong>最低売上保証として6名様分（¥66,000）</strong>が発生いたします。<br />ご承知頂ける方のみご予約をお願いいたします。</p>
+                  <div className="k-warning-btns">
+                    <button className="btn-p" style={{ fontSize:14, padding:'13px' }} onClick={() => {
+                      setIsKasshiki(true)
+                      setShowKasshikiWarning(false)
+                      setSelTime('')
+                      setInputErr('')
+                    }}>承知しました</button>
+                    <button className="btn-s" style={{ fontSize:14, padding:'13px', marginTop:8 }} onClick={() => setShowKasshikiWarning(false)}>戻る</button>
                   </div>
                 </div>
               )}
 
-              {/* 貸切要相談 9〜12名 */}
-              <button
-                className={`g-btn-k konsult${selGuest === 'konsult' ? ' sel' : ''}${konsultDisabled() || monthAvailLoading ? ' dis' : ''}`}
-                disabled={konsultDisabled() || monthAvailLoading}
-                onClick={() => {
-                  if (konsultDisabled()) return
-                  setSelGuest('konsult')
-                  setSelCount('')
-                  setSelTime('')
-                  setInputErr('')
-                }}
-              >
-                {konsultDisabled() && avail
-                  ? '💬 貸切要相談（9〜12名）— 本日は受付不可'
-                  : '💬 貸切要相談（9〜12名）'}
-              </button>
-              {selGuest === 'konsult' && (
+              {isKasshiki && (
                 <div className="k-panel">
-                  <p className="k-note">
-                    9〜12名様はご相談の上でのご案内となります。
-                    <br />予約後にスタッフよりLINEにてご連絡いたします。
-                  </p>
-                  <div className="c-row" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-                    {['9', '10', '11', '12'].map((n) => (
-                      <button key={n} className={`c-btn${selCount === n ? ' sel' : ''}`}
-                        onClick={() => { setSelCount(n); setSelTime(''); setInputErr('') }}>
-                        {n}名
-                      </button>
-                    ))}
-                  </div>
+                  <p className="k-note">内容を確認後、ご連絡いたします。</p>
+                  {selGuest && <p className="k-note" style={{ marginTop:4 }}>選択人数：{selGuest}名</p>}
+                  <button className="myres-link" style={{ marginTop:10, fontSize:13 }} onClick={() => {
+                    setIsKasshiki(false)
+                    setShowKasshikiWarning(false)
+                    setSelTime('')
+                  }}>貸切をキャンセル</button>
                 </div>
               )}
             </div>
@@ -806,26 +810,37 @@ export default function Home() {
           <div className="card">
             <div className="card-lbl">❓　Q1. ご利用目的（任意）</div>
             <div className="card-body">
-              <textarea rows={2} value={q1} onChange={(e) => setQ1(e.target.value)}
-                placeholder="例：誕生日、記念日、接待など" />
+              <div className="q-btn-row">
+                {['誕生日・記念日', '接待・会食', '友人・仲間と', '家族で', 'デート', 'その他'].map(opt => (
+                  <button key={opt} className={`q-btn${q1 === opt ? ' sel' : ''}`}
+                    onClick={() => { setQ1(q1 === opt ? '' : opt); setQ1Other('') }}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+              {q1 === 'その他' && (
+                <textarea rows={2} value={q1Other} onChange={e => setQ1Other(e.target.value)}
+                  placeholder="具体的にご記入ください" style={{ marginTop:10 }} />
+              )}
             </div>
           </div>
 
           {/* Q2 */}
           <div className="card">
-            <div className="card-lbl">❓　Q2. 同伴者のご関係性（任意）</div>
+            <div className="card-lbl">❓　Q2. どのように当店を知りましたか（任意）</div>
             <div className="card-body">
-              <textarea rows={2} value={q2} onChange={(e) => setQ2(e.target.value)}
-                placeholder="例：恋人、家族、友人、同僚など" />
-            </div>
-          </div>
-
-          {/* Q3 */}
-          <div className="card">
-            <div className="card-lbl">❓　Q3. どのように当店を知りましたか（任意）</div>
-            <div className="card-body">
-              <textarea rows={2} value={q3} onChange={(e) => setQ3(e.target.value)}
-                placeholder="例：Instagram、食べログ、知人の紹介など" />
+              <div className="q-btn-row">
+                {['グーグルマップ', 'インターネット検索', '食べログ', 'SNS', '知人の紹介', 'その他'].map(opt => (
+                  <button key={opt} className={`q-btn${q3 === opt ? ' sel' : ''}`}
+                    onClick={() => { setQ3(q3 === opt ? '' : opt); setQ3Other('') }}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+              {q3 === 'その他' && (
+                <textarea rows={2} value={q3Other} onChange={e => setQ3Other(e.target.value)}
+                  placeholder="具体的にご記入ください" style={{ marginTop:10 }} />
+              )}
             </div>
           </div>
 
@@ -873,7 +888,7 @@ export default function Home() {
             </div>
             <div className="cf-row">
               <div className="cf-lbl">人数</div>
-              <div className="cf-val">{effectiveGuests}名様</div>
+              <div className="cf-val">{effectiveGuests ? `${effectiveGuests}名様` : '人数未定'}</div>
             </div>
             {isKasshiki && (
               <div className="cf-row">
@@ -1174,7 +1189,7 @@ export default function Home() {
         }
         input:focus, textarea:focus { outline: none; border-color: var(--green); background: #fff; }
         textarea { resize: none; }
-        .g-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+        .g-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
         .g-btn, .t-btn, .c-btn {
           padding: 10px 4px; border: 1.5px solid var(--border); border-radius: 8px;
           background: var(--white); font-size: 13px; font-weight: bold; color: var(--text);
@@ -1193,10 +1208,15 @@ export default function Home() {
         }
         .g-btn-k.sel { background: var(--green); border-color: var(--green); color: #fff; }
         .g-btn-k.dis { opacity: 0.5; cursor: not-allowed; pointer-events: none; background: #f5f5f5; border-color: #ccc; color: #999; }
-        .g-btn-k.konsult { border-color: #888; background: #f8f8f8; color: #444; }
-        .g-btn-k.konsult.sel { background: #555; border-color: #555; color: #fff; }
         .k-panel { margin-top: 12px; padding: 12px 14px; background: #f0fff4; border: 1px solid #b2ecc8; border-radius: 8px; }
-        .k-note { font-size: 12px; color: #2d7a4e; line-height: 1.7; margin-bottom: 10px; }
+        .k-note { font-size: 12px; color: #2d7a4e; line-height: 1.7; }
+        .k-warning { margin-top: 12px; padding: 14px; background: #fff8e1; border: 1.5px solid #ffcc02; border-radius: 10px; }
+        .k-warning-title { font-size: 13px; font-weight: bold; color: #e65100; margin-bottom: 8px; }
+        .k-warning-body { font-size: 13px; color: #5d4037; line-height: 1.7; margin-bottom: 12px; }
+        .k-warning-btns { display: flex; flex-direction: column; gap: 0; }
+        .q-btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+        .q-btn { padding: 9px 14px; border: 1.5px solid var(--border); border-radius: 20px; background: var(--white); font-size: 13px; color: var(--text); cursor: pointer; transition: all 0.15s; }
+        .q-btn.sel { background: var(--green); border-color: var(--green); color: #fff; }
         .c-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
         .t-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
         .t-btn { padding: 14px 4px; }
