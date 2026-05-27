@@ -455,7 +455,7 @@ export default function Home() {
     const now = new Date()
     setDateMin(computeDateMin(now, {}))
     const mx = new Date(now)
-    mx.setFullYear(mx.getFullYear() + 1)
+    mx.setFullYear(mx.getFullYear() + 3)
     setDateMax(toYMD(mx))
     // コース・時間帯設定を取得
     api.getSettings().then(r => {
