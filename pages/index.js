@@ -912,15 +912,9 @@ export default function Home() {
                 <div className="cf-val">{q1.trim()}</div>
               </div>
             )}
-            {q2.trim() && (
-              <div className="cf-row">
-                <div className="cf-lbl">Q2</div>
-                <div className="cf-val">{q2.trim()}</div>
-              </div>
-            )}
             {q3.trim() && (
               <div className="cf-row">
-                <div className="cf-lbl">Q3</div>
+                <div className="cf-lbl">Q2</div>
                 <div className="cf-val">{q3.trim()}</div>
               </div>
             )}
