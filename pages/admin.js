@@ -675,7 +675,8 @@ export default function Admin() {
     try {
       const r = await api.getNotificationSettings()
       if (r.success && r.settings) setNotifSettings({ ...DEFAULT_NOTIF_SETTINGS, ...r.settings })
-    } catch {}
+      else if (r.error) showToast('通知設定の読み込みに失敗しました', 'error')
+    } catch { showToast('通知設定の読み込みに失敗しました', 'error') }
     setNotifSettingsLoading(false)
   }
 
