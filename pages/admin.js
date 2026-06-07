@@ -1689,6 +1689,36 @@ export default function Admin() {
                   </div>
                 </div>
 
+                {/* 一括操作 */}
+                <div style={{ background:'#fff', borderRadius:12, padding:16, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                  <div style={{ fontSize:13, fontWeight:'bold', marginBottom:10, color:'#555' }}>一括操作</div>
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                    <button onClick={() => {
+                      const next = {}
+                      Object.keys(notifSettings).forEach(k => { next[k] = { ...notifSettings[k], enabled: true } })
+                      setNotifSettings(next)
+                    }} style={{ ...btnGray, fontSize:12 }}>全てON</button>
+                    <button onClick={() => {
+                      const next = {}
+                      Object.keys(notifSettings).forEach(k => { next[k] = { ...notifSettings[k], enabled: false } })
+                      setNotifSettings(next)
+                    }} style={{ ...btnGray, fontSize:12 }}>全てOFF</button>
+                    <button onClick={() => {
+                      const testKeys = Object.keys(DEFAULT_NOTIF_SETTINGS)
+                      const next = {}
+                      testKeys.forEach(k => {
+                        next[k] = { enabled: k.startsWith('食べログ') || k.startsWith('椎名'), target: notifSettings[k]?.target || 'B' }
+                      })
+                      setNotifSettings(next)
+                    }} style={{ ...btnGray, fontSize:12, color:'#e65100', borderColor:'#ffe0b2', background:'#fff8f0' }}>
+                      テスト用（食べログ・椎名さんのみON）
+                    </button>
+                    <button onClick={() => setNotifSettings(DEFAULT_NOTIF_SETTINGS)}
+                      style={{ ...btnGray, fontSize:12 }}>デフォルトに戻す</button>
+                  </div>
+                  <div style={{ fontSize:11, color:'#aaa', marginTop:8 }}>※ 変更後は「通知設定を保存」を押してください</div>
+                </div>
+
                 {/* 通知設定テーブル */}
                 {[
                   { section: 'LINE予約システム', rows: [
