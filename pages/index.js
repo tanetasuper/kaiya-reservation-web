@@ -266,12 +266,19 @@ export default function Home() {
       return
     }
     setMonthAvailLoading(true)
-    try {
-      const r = await api.getMonthAvailability(year, month + 1)
-      const dates = r.dates || {}
+    let dates = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await api.getMonthAvailability(year, month + 1)
+        dates = r.dates || {}
+        break
+      } catch {
+        if (attempt < 2) await new Promise(res => setTimeout(res, 1500 * (attempt + 1)))
+      }
+    }
+    if (dates !== null) {
       monthAvailCacheRef.current[cacheKey] = dates
       setMonthAvail(dates)
-      // Silently preload adjacent months
       ;[-3, -2, -1, 1, 2, 3].forEach(delta => {
         let pm = month + delta, py = year
         if (pm < 0) { pm = 11; py-- }
@@ -284,7 +291,9 @@ export default function Home() {
             monthAvailCacheRef.current[key] = preData
         }).catch(() => {})
       })
-    } catch { setMonthAvail({}) }
+    } else {
+      setMonthAvail({})
+    }
     setMonthAvailLoading(false)
   }
 
@@ -700,7 +709,12 @@ export default function Home() {
           {/* 来店日 */}
           <div className="card">
             <div className="card-lbl">📅　ご来店日</div>
-            <div className="card-body">
+            <div className="card-body" style={{ position: 'relative' }}>
+              {monthAvailLoading && (
+                <div style={{ position:'absolute', inset:0, background:'rgba(245,245,245,0.92)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1, minHeight:180 }}>
+                  <span style={{ fontSize:13, color:'#888' }}>カレンダー取得中...</span>
+                </div>
+              )}
               <CustomerCalendar
                 year={calYear} month={calMonth}
                 monthAvail={monthAvail}
