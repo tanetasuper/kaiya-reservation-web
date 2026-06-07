@@ -962,21 +962,22 @@ export default function Home() {
               </div>
             ) : done.error ? (
               <>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
-                <div className="done-ttl" style={{ color: 'var(--red)' }}>エラーが発生しました</div>
-                <div className="done-sub">{done.error}</div>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🙇</div>
+                <div className="done-ttl" style={{ color: 'var(--red)' }}>申し訳ございません</div>
+                <div className="done-sub" style={{ lineHeight: 1.8 }}>
+                  予約処理中にエラーが発生しました。<br />
+                  原因を特定し、早急に対応いたします。
+                </div>
                 {done.backScreen === 'confirm' && (
                   <>
-                    <div style={{ marginTop: 20, marginBottom: 4, fontSize: 14, color: '#333', lineHeight: 1.6 }}>
-                      食べログから再度ご予約いただけます。
+                    <div style={{ marginTop: 20, marginBottom: 12, fontSize: 14, color: '#555', lineHeight: 1.8, borderTop: '1px solid #eee', paddingTop: 16 }}>
+                      お手数ですが、食べログより<br />再度ご予約いただけますと幸いです。
                     </div>
-                    <div className="mt16">
-                      <a href="https://yoyaku.tabelog.com/yoyaku/smartphone/net_booking_form/index?rcd=13285344"
-                         target="_blank" rel="noopener noreferrer"
-                         style={{ display:'block', width:'100%', padding:'17px', background:'var(--green)', color:'#fff', border:'none', borderRadius:12, fontSize:16, fontWeight:'bold', cursor:'pointer', letterSpacing:'0.3px', textDecoration:'none', textAlign:'center', boxSizing:'border-box' }}>
-                        食べログで予約する →
-                      </a>
-                    </div>
+                    <a href="https://yoyaku.tabelog.com/yoyaku/smartphone/net_booking_form/index?rcd=13285344"
+                       target="_blank" rel="noopener noreferrer"
+                       style={{ display:'block', width:'100%', padding:'17px', background:'var(--green)', color:'#fff', border:'none', borderRadius:12, fontSize:16, fontWeight:'bold', cursor:'pointer', letterSpacing:'0.3px', textDecoration:'none', textAlign:'center', boxSizing:'border-box' }}>
+                      食べログで予約する →
+                    </a>
                   </>
                 )}
                 <div className="mt16">
