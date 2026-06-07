@@ -491,6 +491,28 @@ export default function Admin() {
   const [recoveryQuestion, setRecoveryQuestion] = useState('')
   const [loadingQuestion,  setLoadingQuestion]  = useState(false)
 
+  // ── Notification settings tab ────
+  const DEFAULT_NOTIF_SETTINGS = {
+    LINE_新規予約:      { enabled: true,  target: 'B' },
+    LINE_変更:         { enabled: true,  target: 'A' },
+    LINE_キャンセル:    { enabled: true,  target: 'A' },
+    LINE_管理者追加:    { enabled: true,  target: 'B' },
+    LINE_管理者削除:    { enabled: true,  target: 'B' },
+    食べログ_新規:      { enabled: true,  target: 'B' },
+    食べログ_変更:      { enabled: true,  target: 'B' },
+    食べログ_キャンセル: { enabled: true,  target: 'B' },
+    椎名_同期:         { enabled: true,  target: 'B' },
+    椎名_変更:         { enabled: true,  target: 'B' },
+    椎名_削除:         { enabled: true,  target: 'B' },
+    手動_追加:         { enabled: true,  target: 'B' },
+    手動_変更:         { enabled: true,  target: 'B' },
+    手動_削除:         { enabled: true,  target: 'B' },
+    エラー:            { enabled: true,  target: 'B' },
+  }
+  const [notifSettings, setNotifSettings] = useState(DEFAULT_NOTIF_SETTINGS)
+  const [notifSettingsLoading, setNotifSettingsLoading] = useState(false)
+  const [notifSettingsSaving,  setNotifSettingsSaving]  = useState(false)
+
   // ── Data management ────
   const [custData,       setCustData]       = useState(null)
   const [custLoading,    setCustLoading]    = useState(false)
@@ -558,6 +580,7 @@ export default function Admin() {
     loadSeatBlocks()
     loadNotifications()
     loadSettings()
+    loadNotifSettings()
   }, [authed])
 
   useEffect(() => {
@@ -645,6 +668,25 @@ export default function Admin() {
       setNotifs(r.list || [])
     } catch { setNotifs([]) }
     setNotifLoading(false)
+  }
+
+  async function loadNotifSettings() {
+    setNotifSettingsLoading(true)
+    try {
+      const r = await api.getNotificationSettings()
+      if (r.success && r.settings) setNotifSettings({ ...DEFAULT_NOTIF_SETTINGS, ...r.settings })
+    } catch {}
+    setNotifSettingsLoading(false)
+  }
+
+  async function saveNotifSettings() {
+    setNotifSettingsSaving(true)
+    try {
+      const r = await api.saveNotificationSettings(notifSettings)
+      if (r.success) showToast('通知設定を保存しました')
+      else showToast(r.error || '保存に失敗しました', 'error')
+    } catch { showToast('通信エラー', 'error') }
+    setNotifSettingsSaving(false)
   }
 
   async function loadSettings() {
@@ -918,7 +960,7 @@ export default function Admin() {
 
       {/* Tabs */}
       <div style={{ background:'#fff', borderBottom:'1px solid #e0e0e0', display:'flex' }}>
-        {[['reservations','予約一覧'], ['notifications','通知'], ['settings','設定']].map(([id,label]) => (
+        {[['reservations','予約一覧'], ['notifications','通知'], ['settings','設定'], ['notif-settings','通知設定']].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{
               flex:1, padding:'13px 4px', border:'none', background:'transparent',
@@ -1620,6 +1662,118 @@ export default function Admin() {
                   </div>
                 </div>
 
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ─── TAB: 通知設定 ────────────────────────────────────────── */}
+        {tab==='notif-settings' && (
+          <div>
+            {notifSettingsLoading ? (
+              <div style={{ textAlign:'center', padding:40, color:'#aaa' }}>読み込み中...</div>
+            ) : (
+              <>
+                {/* グループ説明 */}
+                <div style={{ background:'#fff', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14 }}>通知グループ</h2>
+                  <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+                    <div style={{ flex:1, minWidth:200, padding:14, background:'#f3f8ff', border:'1px solid #bbdefb', borderRadius:10 }}>
+                      <div style={{ fontWeight:'bold', fontSize:13, marginBottom:4 }}>グループ A</div>
+                      <div style={{ fontSize:12, color:'#555' }}>仙一・種谷・徳さんの3人グループ</div>
+                    </div>
+                    <div style={{ flex:1, minWidth:200, padding:14, background:'#f8fffe', border:'1px solid #c8e6c9', borderRadius:10 }}>
+                      <div style={{ fontWeight:'bold', fontSize:13, marginBottom:4 }}>グループ B</div>
+                      <div style={{ fontSize:12, color:'#555' }}>スタッフ全員グループ</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 通知設定テーブル */}
+                {[
+                  { section: 'LINE予約システム', rows: [
+                    { key: 'LINE_新規予約',   label: '新規予約' },
+                    { key: 'LINE_変更',       label: '予約変更' },
+                    { key: 'LINE_キャンセル', label: 'キャンセル' },
+                    { key: 'LINE_管理者追加', label: '管理者追加' },
+                    { key: 'LINE_管理者削除', label: '管理者削除' },
+                  ]},
+                  { section: '食べログ', rows: [
+                    { key: '食べログ_新規',      label: '新規予約' },
+                    { key: '食べログ_変更',      label: '予約変更' },
+                    { key: '食べログ_キャンセル', label: 'キャンセル' },
+                  ]},
+                  { section: '椎名さん（カレンダー同期）', rows: [
+                    { key: '椎名_同期', label: '新規同期' },
+                    { key: '椎名_変更', label: '変更検知' },
+                    { key: '椎名_削除', label: '削除検知' },
+                  ]},
+                  { section: '手動予約', rows: [
+                    { key: '手動_追加', label: '追加' },
+                    { key: '手動_変更', label: '変更' },
+                    { key: '手動_削除', label: '削除' },
+                  ]},
+                  { section: 'エラー通知', rows: [
+                    { key: 'エラー', label: 'システムエラー' },
+                  ]},
+                ].map(({ section, rows }) => (
+                  <div key={section} style={{ background:'#fff', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px rgba(0,0,0,.08)' }}>
+                    <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:14 }}>{section}</h2>
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                      <thead>
+                        <tr style={{ borderBottom:'2px solid #f0f0f0' }}>
+                          <th style={{ textAlign:'left', padding:'6px 8px', color:'#888', fontWeight:'normal', width:'40%' }}>通知種別</th>
+                          <th style={{ textAlign:'center', padding:'6px 8px', color:'#888', fontWeight:'normal', width:'20%' }}>ON / OFF</th>
+                          <th style={{ textAlign:'center', padding:'6px 8px', color:'#888', fontWeight:'normal', width:'20%' }}>グループA</th>
+                          <th style={{ textAlign:'center', padding:'6px 8px', color:'#888', fontWeight:'normal', width:'20%' }}>グループB</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map(({ key, label }) => {
+                          const s = notifSettings[key] || { enabled: true, target: 'B' }
+                          return (
+                            <tr key={key} style={{ borderBottom:'1px solid #f5f5f5' }}>
+                              <td style={{ padding:'10px 8px', color:'#333' }}>{label}</td>
+                              <td style={{ padding:'10px 8px', textAlign:'center' }}>
+                                <button
+                                  onClick={() => setNotifSettings(prev => ({ ...prev, [key]: { ...s, enabled: !s.enabled } }))}
+                                  style={{
+                                    padding:'4px 14px', borderRadius:20, border:'none', cursor:'pointer', fontSize:12, fontWeight:'bold',
+                                    background: s.enabled ? '#4caf50' : '#e0e0e0',
+                                    color: s.enabled ? '#fff' : '#999',
+                                  }}>
+                                  {s.enabled ? 'ON' : 'OFF'}
+                                </button>
+                              </td>
+                              <td style={{ padding:'10px 8px', textAlign:'center' }}>
+                                <input type="radio"
+                                  checked={s.target === 'A'}
+                                  disabled={!s.enabled}
+                                  onChange={() => setNotifSettings(prev => ({ ...prev, [key]: { ...s, target: 'A' } }))}
+                                  style={{ cursor: s.enabled ? 'pointer' : 'default', accentColor:'#1976d2', width:16, height:16 }} />
+                              </td>
+                              <td style={{ padding:'10px 8px', textAlign:'center' }}>
+                                <input type="radio"
+                                  checked={s.target === 'B'}
+                                  disabled={!s.enabled}
+                                  onChange={() => setNotifSettings(prev => ({ ...prev, [key]: { ...s, target: 'B' } }))}
+                                  style={{ cursor: s.enabled ? 'pointer' : 'default', accentColor:'#2e7d32', width:16, height:16 }} />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+
+                {/* 保存ボタン */}
+                <div style={{ display:'flex', justifyContent:'flex-end', padding:'8px 0 16px' }}>
+                  <button disabled={notifSettingsSaving} onClick={saveNotifSettings}
+                    style={{ ...btnGreen, fontSize:14, padding:'12px 32px', borderRadius:10 }}>
+                    {notifSettingsSaving ? '保存中...' : '通知設定を保存'}
+                  </button>
+                </div>
               </>
             )}
           </div>
