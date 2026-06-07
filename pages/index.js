@@ -965,6 +965,20 @@ export default function Home() {
                 <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
                 <div className="done-ttl" style={{ color: 'var(--red)' }}>エラーが発生しました</div>
                 <div className="done-sub">{done.error}</div>
+                {done.backScreen === 'confirm' && (
+                  <>
+                    <div style={{ marginTop: 20, marginBottom: 4, fontSize: 14, color: '#333', lineHeight: 1.6 }}>
+                      食べログから再度ご予約いただけます。
+                    </div>
+                    <div className="mt16">
+                      <a href="https://yoyaku.tabelog.com/yoyaku/smartphone/net_booking_form/index?rcd=13285344"
+                         target="_blank" rel="noopener noreferrer"
+                         style={{ display:'block', width:'100%', padding:'17px', background:'var(--green)', color:'#fff', border:'none', borderRadius:12, fontSize:16, fontWeight:'bold', cursor:'pointer', letterSpacing:'0.3px', textDecoration:'none', textAlign:'center', boxSizing:'border-box' }}>
+                        食べログで予約する →
+                      </a>
+                    </div>
+                  </>
+                )}
                 <div className="mt16">
                   <button className="btn-s" onClick={() => { setScreen(done.backScreen); setSubmitting(false); setChgSubmitting(false) }}>← 戻る</button>
                 </div>
