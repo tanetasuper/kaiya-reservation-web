@@ -13,6 +13,23 @@ function addMin(t, m) {
   return `${String(Math.floor(tot / 60)).padStart(2, '0')}:${String(tot % 60).padStart(2, '0')}`
 }
 
+function formatTimeSlotRanges(slots) {
+  if (!slots || slots.length === 0) return ''
+  const ranges = []
+  let start = slots[0], prev = slots[0]
+  for (let i = 1; i < slots.length; i++) {
+    const [ph, pm2] = prev.split(':').map(Number)
+    const [ch, cm] = slots[i].split(':').map(Number)
+    if ((ch * 60 + cm) - (ph * 60 + pm2) > 30) {
+      ranges.push(start + '〜' + prev)
+      start = slots[i]
+    }
+    prev = slots[i]
+  }
+  ranges.push(start + '〜' + prev)
+  return ranges.join(' / ')
+}
+
 // yyyy/MM/dd or yyyy-MM-dd → M月D日（曜）
 function fmtDate(ymd) {
   if (!ymd) return ''
@@ -237,12 +254,13 @@ export default function Home() {
   const [chgSubmitting, setChgSubmitting] = useState(false)
 
   const effectiveGuests = selGuest
-  const showTimeCard = selDate && (selGuest || isKasshiki)
+  const showTimeCard = !!selDate
+  const showGuestCard = !!(selDate && selTime)
 
   // ===== 月別空席取得 =====
   async function fetchMonthAvail(year, month) {
     const cacheKey = `${year}-${month}`
-    if (monthAvailCacheRef.current[cacheKey]) {
+    if (monthAvailCacheRef.current[cacheKey] !== undefined) {
       setMonthAvail(monthAvailCacheRef.current[cacheKey])
       return
     }
@@ -260,7 +278,9 @@ export default function Home() {
         const key = `${py}-${pm}`
         if (monthAvailCacheRef.current[key] !== undefined) return
         api.getMonthAvailability(py, pm + 1).then(rr => {
-          if (monthAvailCacheRef.current[key] === undefined) monthAvailCacheRef.current[key] = rr.dates || {}
+          const preData = rr.dates || {}
+          if (monthAvailCacheRef.current[key] === undefined && Object.keys(preData).length > 0)
+            monthAvailCacheRef.current[key] = preData
         }).catch(() => {})
       })
     } catch { setMonthAvail({}) }
@@ -490,8 +510,8 @@ export default function Home() {
   // ===== バリデーション =====
   function goConfirm() {
     if (!selDate) return setInputErr('ご来店日を選択してください')
-    if (!selGuest && !isKasshiki) return setInputErr('人数を選択してください')
     if (!selTime) return setInputErr('来店時間を選択してください')
+    if (!selGuest && !isKasshiki) return setInputErr('人数を選択してください')
     if (!String(name).trim()) return setInputErr('お名前を入力してください')
     if (!String(phone).trim()) return setInputErr('電話番号を入力してください')
     if (avail && !isKasshiki && selGuest) {
@@ -694,100 +714,103 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 人数 */}
-          <div className="card">
-            <div className="card-lbl">
-              👥　人数
-              {availLoading && <span className="avail-loading"> 確認中...</span>}
-              {avail && !availLoading && !isKasshiki && <span className="avail-info"> 残席 {avail.remainingSeats}名</span>}
-            </div>
-            <div className="card-body">
-              <div className="g-row">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => {
-                  const disabled = guestDisabled(n) || monthAvailLoading || isKasshiki
-                  const isOccupied = !isKasshiki && avail && !availLoading && !monthAvailLoading && guestDisabled(n)
-                  return (
-                    <button
-                      key={n}
-                      className={`g-btn${selGuest === String(n) && !isKasshiki ? ' sel' : ''}${disabled ? ' dis' : ''}`}
-                      disabled={disabled}
-                      onClick={() => {
-                        if (disabled) return
-                        setSelGuest(String(n))
-                        setIsKasshiki(false)
-                        setShowKasshikiWarning(false)
-                        setSelTime('')
-                        setInputErr('')
-                      }}
-                    >
-                      <span className="g-btn-main">{n}名</span>
-                      {isOccupied && <span className="g-btn-sub">{n === 1 ? '条件あり' : '満席'}</span>}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* 貸切ボタン */}
-              <button
-                className={`g-btn-k${isKasshiki ? ' sel' : ''}${kasshikiDisabled() || monthAvailLoading ? ' dis' : ''}`}
-                disabled={kasshikiDisabled() || monthAvailLoading}
-                onClick={() => {
-                  if (kasshikiDisabled()) return
-                  const n = parseInt(selGuest) || 0
-                  if (!selGuest || n < 6) {
-                    setShowKasshikiWarning(true)
-                  } else {
-                    setIsKasshiki(true)
-                    setSelTime('')
-                    setInputErr('')
-                  }
-                }}
-              >
-                {kasshikiDisabled() && avail ? '🔒 貸切で予約する — 本日は受付不可' : '🔒 貸切で予約する'}
-              </button>
-
-              {/* 貸切警告 */}
-              {showKasshikiWarning && (
-                <div className="k-warning">
-                  {!selGuest && <p className="k-warning-title">人数未選択です。</p>}
-                  <p className="k-warning-body">貸切プランのご利用には<strong>最低売上保証として6名様分（¥66,000）</strong>が発生いたします。<br />ご承知頂ける方のみご予約をお願いいたします。</p>
-                  <div className="k-warning-btns">
-                    <button className="btn-p" style={{ fontSize:14, padding:'13px' }} onClick={() => {
-                      setIsKasshiki(true)
-                      setShowKasshikiWarning(false)
-                      setSelTime('')
-                      setInputErr('')
-                    }}>承知しました</button>
-                    <button className="btn-s" style={{ fontSize:14, padding:'13px', marginTop:8 }} onClick={() => setShowKasshikiWarning(false)}>戻る</button>
-                  </div>
-                </div>
-              )}
-
-              {isKasshiki && (
-                <div className="k-panel">
-                  <p className="k-note">内容を確認後、ご連絡いたします。</p>
-                  {selGuest && <p className="k-note" style={{ marginTop:4 }}>選択人数：{selGuest}名</p>}
-                  <button className="myres-link" style={{ marginTop:10, fontSize:13 }} onClick={() => {
-                    setIsKasshiki(false)
-                    setShowKasshikiWarning(false)
-                    setSelTime('')
-                  }}>貸切をキャンセル</button>
-                </div>
-              )}
-            </div>
-          </div>
-
           {/* 来店時間 */}
           {showTimeCard && (
             <div className="card">
               <div className="card-lbl">⏰　来店時間</div>
               <div className="card-body">
-                <TimeGrid value={selTime} onChange={(s) => { setSelTime(s); setInputErr('') }} slots={courseTimeSlots} />
+                <TimeGrid value={selTime} onChange={(s) => { setSelTime(s); setSelGuest(''); setIsKasshiki(false); setShowKasshikiWarning(false); setInputErr('') }} slots={courseTimeSlots} />
                 <p className="hint">
                   {courseTimeSlots.length > 0
-                    ? `受付時間 ${courseTimeSlots[0]}〜${courseTimeSlots[courseTimeSlots.length-1]}（コースは約${Math.floor(selStayMin/60)}時間${selStayMin%60>0?selStayMin%60+'分':''}）`
+                    ? `受付時間 ${formatTimeSlotRanges(courseTimeSlots)}（コースは約${Math.floor(selStayMin/60)}時間${selStayMin%60>0?selStayMin%60+'分':''}）`
                     : ''}
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* 人数 */}
+          {showGuestCard && (
+            <div className="card">
+              <div className="card-lbl">
+                👥　人数
+                {availLoading && <span className="avail-loading"> 確認中...</span>}
+                {avail && !availLoading && !isKasshiki && <span className="avail-info"> 残席 {avail.remainingSeats}名</span>}
+              </div>
+              <div className="card-body" style={{ position: 'relative' }}>
+                {availLoading && (
+                  <div style={{ position:'absolute', inset:0, background:'rgba(245,245,245,0.92)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1 }}>
+                    <span style={{ fontSize:13, color:'#888' }}>残席確認中...</span>
+                  </div>
+                )}
+                <div className="g-row">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => {
+                    const disabled = guestDisabled(n) || monthAvailLoading || isKasshiki
+                    const isOccupied = !isKasshiki && avail && !availLoading && !monthAvailLoading && guestDisabled(n)
+                    return (
+                      <button
+                        key={n}
+                        className={`g-btn${selGuest === String(n) && !isKasshiki ? ' sel' : ''}${disabled ? ' dis' : ''}`}
+                        disabled={disabled}
+                        onClick={() => {
+                          if (disabled) return
+                          setSelGuest(String(n))
+                          setIsKasshiki(false)
+                          setShowKasshikiWarning(false)
+                          setInputErr('')
+                        }}
+                      >
+                        <span className="g-btn-main">{n}名</span>
+                        {isOccupied && <span className="g-btn-sub">{n === 1 ? '条件あり' : '満席'}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* 貸切ボタン */}
+                <button
+                  className={`g-btn-k${isKasshiki ? ' sel' : ''}${kasshikiDisabled() || monthAvailLoading ? ' dis' : ''}`}
+                  disabled={kasshikiDisabled() || monthAvailLoading}
+                  onClick={() => {
+                    if (kasshikiDisabled()) return
+                    const n = parseInt(selGuest) || 0
+                    if (!selGuest || n < 6) {
+                      setShowKasshikiWarning(true)
+                    } else {
+                      setIsKasshiki(true)
+                      setInputErr('')
+                    }
+                  }}
+                >
+                  {kasshikiDisabled() && avail ? '🔒 貸切で予約する — 本日は受付不可' : '🔒 貸切で予約する'}
+                </button>
+
+                {/* 貸切警告 */}
+                {showKasshikiWarning && (
+                  <div className="k-warning">
+                    {!selGuest && <p className="k-warning-title">人数未選択です。</p>}
+                    <p className="k-warning-body">貸切プランのご利用には<strong>最低売上保証として6名様分（¥66,000）</strong>が発生いたします。<br />ご承知頂ける方のみご予約をお願いいたします。</p>
+                    <div className="k-warning-btns">
+                      <button className="btn-p" style={{ fontSize:14, padding:'13px' }} onClick={() => {
+                        setIsKasshiki(true)
+                        setShowKasshikiWarning(false)
+                        setInputErr('')
+                      }}>承知しました</button>
+                      <button className="btn-s" style={{ fontSize:14, padding:'13px', marginTop:8 }} onClick={() => setShowKasshikiWarning(false)}>戻る</button>
+                    </div>
+                  </div>
+                )}
+
+                {isKasshiki && (
+                  <div className="k-panel">
+                    <p className="k-note">内容を確認後、ご連絡いたします。</p>
+                    {selGuest && <p className="k-note" style={{ marginTop:4 }}>選択人数：{selGuest}名</p>}
+                    <button className="myres-link" style={{ marginTop:10, fontSize:13 }} onClick={() => {
+                      setIsKasshiki(false)
+                      setShowKasshikiWarning(false)
+                    }}>貸切をキャンセル</button>
+                  </div>
+                )}
               </div>
             </div>
           )}
