@@ -217,7 +217,7 @@ export default function Home() {
   const [calYear,          setCalYear]          = useState(new Date().getFullYear())
   const [calMonth,         setCalMonth]         = useState(new Date().getMonth())
   const [monthAvail,       setMonthAvail]       = useState({})
-  const [monthAvailLoading,setMonthAvailLoading]= useState(false)
+  const [monthAvailLoading,setMonthAvailLoading]= useState(true)
   const monthAvailCacheRef = useRef({})
 
   // 予約フォーム
@@ -262,6 +262,7 @@ export default function Home() {
     const cacheKey = `${year}-${month}`
     if (monthAvailCacheRef.current[cacheKey] !== undefined) {
       setMonthAvail(monthAvailCacheRef.current[cacheKey])
+      setMonthAvailLoading(false)
       return
     }
     setMonthAvailLoading(true)

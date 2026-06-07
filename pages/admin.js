@@ -17,7 +17,7 @@ function generateSlots(tr) {
   }
   return slots
 }
-const STATUSES   = ['確定','キャンセル','カレンダー削除']
+const STATUSES   = ['確定','要確認','キャンセル','カレンダー削除']
 const SOURCES    = ['電話','食べログ','LINE','ウォークイン','その他']
 const GUESTS     = ['1','2','3','4','5','6','7','8']
 const WEEK       = ['日','月','火','水','木','金','土']
@@ -823,7 +823,7 @@ export default function Admin() {
   // dayData for calendar: keyed by 'yyyy/MM/dd'
   const resCalData = useMemo(() => {
     const m = {}
-    reservations.filter(r => r.status==='確定').forEach(r => {
+    reservations.filter(r => r.status==='確定' || r.status==='要確認').forEach(r => {
       if (!m[r.date]) m[r.date] = { count:0, guests:0 }
       m[r.date].count++
       m[r.date].guests += parseInt(r.guests)||0
@@ -848,11 +848,11 @@ export default function Admin() {
 
   const dayRes = useMemo(() =>
     reservations
-      .filter(r => r.date === selectedDate && r.status === '確定')
+      .filter(r => r.date === selectedDate && (r.status === '確定' || r.status === '要確認'))
       .sort((a,b) => (formatTime(a.time) < formatTime(b.time) ? -1 : 1)),
     [reservations, selectedDate]
   )
-  const dayConfirmedGuests = dayRes.filter(r=>r.status==='確定').reduce((s,r)=>s+(parseInt(r.guests)||0),0)
+  const dayConfirmedGuests = dayRes.reduce((s,r)=>s+(parseInt(r.guests)||0),0)
   const daySeatBlock       = selectedDate ? seatBlockMap[selectedDate] : null
   const dayIsBlocked       = selectedDate ? blockedSet.has(selectedDate) : false
   const dayRemaining       = Math.max(0, settings.maxSeats - (daySeatBlock?.blockedSeats||0) - dayConfirmedGuests)
@@ -992,7 +992,7 @@ export default function Admin() {
             {!resLoading && calYear === new Date().getFullYear() && calMonth === new Date().getMonth() && (() => {
               const now = new Date()
               const todayYMD = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`
-              const todayList = reservations.filter(r => r.date === todayYMD && r.status === '確定')
+              const todayList = reservations.filter(r => r.date === todayYMD && (r.status === '確定' || r.status === '要確認'))
               if (todayList.length === 0) return null
               const todayG = todayList.reduce((s,r) => s + (parseInt(r.guests)||0), 0)
               return (
