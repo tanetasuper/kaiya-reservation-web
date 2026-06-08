@@ -507,6 +507,7 @@ export default function Admin() {
     手動_追加:         { enabled: true,  target: 'B' },
     手動_変更:         { enabled: true,  target: 'B' },
     手動_削除:         { enabled: true,  target: 'B' },
+    カレンダー連携_追加: { enabled: true,  target: 'B' },
     エラー:            { enabled: true,  target: 'B' },
   }
   const [notifSettings, setNotifSettings] = useState(DEFAULT_NOTIF_SETTINGS)
@@ -1743,6 +1744,9 @@ export default function Admin() {
                     { key: '手動_追加', label: '追加' },
                     { key: '手動_変更', label: '変更' },
                     { key: '手動_削除', label: '削除' },
+                  ]},
+                  { section: 'カレンダー連携', rows: [
+                    { key: 'カレンダー連携_追加', label: '自動登録' },
                   ]},
                   { section: 'エラー通知', rows: [
                     { key: 'エラー', label: 'システムエラー' },
