@@ -52,6 +52,11 @@ export default function Setup() {
   const preset = VERTICAL_PRESETS.find(p => p.key === presetKey)
   const categories = [...new Set(VERTICAL_PRESETS.map(p => p.category))]
   const needsStaff = preset && preset.settings.capacityModel === 'perStaff'
+  // 「接続設定」「完了」両画面の警告文言が、質問（Q_STAFF_LABEL等）で既定と異なる呼び方に変更しても
+  // preset.settings.staffLabel/countUnit（プリセットの生の既定値）のまま表示され続けるdriftがあった
+  // （admin.js側のSetupWizardで発見・修正した同種の問題。業種経営者陣視点レビュー・第42回での指摘）。
+  // 実際に適用される設定（質問の回答を反映した値）を使うように修正する。
+  const resolvedSettings = preset ? { ...preset.settings, ...buildPresetPatch(preset, answers, customText).settingsPatch } : {}
 
   function pickCategory(key) {
     setPresetKey(key)
@@ -182,7 +187,7 @@ export default function Setup() {
                 {/* 「担当者」という一般語だけ固定で、選んだ業態の実際の呼び方（整備士・医師・講師等、
                     preset.settings.staffLabel）に追従していなかった（業種経営者陣視点レビュー・
                     ラウンド38での指摘：この警告を読む店主が自分の業態に翻訳し直す必要があった）。 */}
-                ⚠️ 「{preset.label}」は{preset.settings.staffLabel || '担当者'}単位の容量管理です。初期設定完了後、必ず管理画面の「設定」タブから{preset.settings.staffLabel || '担当者'}を最低1名登録してください（登録するまで、お客様の予約が全て「対応不可」になります）。
+                ⚠️ 「{preset.label}」は{resolvedSettings.staffLabel || '担当者'}単位の容量管理です。初期設定完了後、必ず管理画面の「設定」タブから{resolvedSettings.staffLabel || '担当者'}を最低1{resolvedSettings.countUnit || '名'}登録してください（登録するまで、お客様の予約が全て「対応不可」になります）。
               </div>
             )}
             {/* 業種を選ばずに進んだ場合（skipCategory()、presetKey=''）、settingsPatch/fsetPatchが
@@ -283,7 +288,7 @@ export default function Setup() {
             )}
             {needsStaff && (
               <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
-                ⚠️ 管理画面にログインしたら、{preset.settings.staffLabel || '担当者'}を最低1名登録してください（登録するまでお客様の予約が全て「対応不可」になります）。
+                ⚠️ 管理画面にログインしたら、{resolvedSettings.staffLabel || '担当者'}を最低1{resolvedSettings.countUnit || '名'}登録してください（登録するまでお客様の予約が全て「対応不可」になります）。
               </div>
             )}
             {!preset && (

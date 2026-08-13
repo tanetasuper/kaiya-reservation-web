@@ -1044,6 +1044,24 @@ export default function Home() {
     proceedAfterAuth(userId, isGuestFallback, currentIdToken)
   }, [proceedAfterAuth])
 
+  // initLiff内のPromise.raceはliff.init()自体にしか3秒タイムアウトを掛けていない。その前段の
+  // <Script>読み込みが止まったまま（回線が不安定でonLoad/onErrorのどちらも発火しない場合や、
+  // 通信を無応答のまま止めるプロキシ・captive portal等）だったり、liff.getProfile()が応答しない
+  // 場合は上記3秒タイムアウトの外側になるため、従来はローディング画面から永久に抜けられなかった
+  // （ランダム客層視点レビュー・ラウンド42での指摘）。initLiffの内部構造は変えず、LIFFの一連の
+  // 流れ全体（スクリプト読み込み～liff.init～getProfile）に対する外側の安全網として、一定時間
+  // （既存の3秒・6秒より十分長い9秒）経ってもまだローディング画面のままなら、既存のゲスト移行
+  // 導線（proceedAsGuest）へ強制的に進める。画面が既に切り替わっていれば（＝initLiffが先に完了
+  // していれば）このタイマーはクリーンアップされ発火しない。
+  useEffect(() => {
+    if (screen !== 'loading') return
+    const timer = setTimeout(() => {
+      console.warn('LIFF: script load / init flow did not complete within 9s, falling back to guest mode')
+      proceedAsGuest()
+    }, 9000)
+    return () => clearTimeout(timer)
+  }, [screen, proceedAsGuest])
+
   // 店名・コース一覧・営業時間等はオーナーが設定変更した時だけ変わる、頻繁には変わらないデータのため、
   // 再訪問時にlocalStorageのキャッシュを即座に反映してから、裏側で最新版を取りに行く
   // （stale-while-revalidate。初回表示が速くなり、万一通信が遅い時も「何も出ない」状態を避けられる）。
@@ -1583,7 +1601,17 @@ export default function Home() {
               <div className="dot" /><div className="dot" /><div className="dot" />
             </div>
             <p className="ld-txt">{t('読み込み中...')}</p>
-            {longWait && <p className="ld-txt" style={{ fontSize: 12, marginTop: 6, opacity: 0.8 }}>{t('通信状況により、時間がかかる場合があります。しばらくお待ちください。')}</p>}
+            {longWait && (
+              <>
+                <p className="ld-txt" style={{ fontSize: 12, marginTop: 6, opacity: 0.8 }}>{t('通信状況により、時間がかかる場合があります。しばらくお待ちください。')}</p>
+                {/* タイマー任せの自動フォールバック（9秒）だけでなく、待たされている本人が今すぐ
+                    進める手段も用意する（ランダム客層視点レビュー・ラウンド42での指摘）。 */}
+                <button className="btn-s" style={{ maxWidth: 320, margin: '14px auto 0' }}
+                  onClick={proceedAsGuest}>
+                  {t('続ける（ゲストとして予約する）')}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1599,7 +1627,7 @@ export default function Home() {
           {/* コース（コース無しモードでは選択UI自体を表示しない） */}
           {!isSimpleMode && (
           <div className="card">
-            <div className="card-lbl" id="course-group-lbl">{itemIcon}　{itemLabel}</div>
+            <h2 className="card-lbl" id="course-group-lbl">{itemIcon}　{itemLabel}</h2>
             {/* コース選択がマウスクリックのみのdivで、キーボード操作・スクリーンリーダーでは選択肢の
                 存在自体が伝わらなかった（累積指摘の総棚卸しでの指摘）。role/tabIndex/キーボード操作を
                 追加し、見た目（レイアウト・スタイル）は変更しない。 */}
@@ -1654,7 +1682,7 @@ export default function Home() {
 
           {/* 来店日 */}
           <div className="card" id="card-date">
-            <div className="card-lbl">{visitText('📅　ご来店日')}</div>
+            <h2 className="card-lbl">{visitText('📅　ご来店日')}</h2>
             <div className="card-body" style={{ position: 'relative' }}>
               {monthAvailLoading && (
                 <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1, minHeight:180 }}>
@@ -1679,10 +1707,10 @@ export default function Home() {
           {/* 来店時間 */}
           {showTimeCard && (
             <div className="card" id="card-time">
-              <div className="card-lbl">
+              <h2 className="card-lbl">
                 {visitText('⏰　来店時間')}
                 {!selTime && availLoading && <span className="avail-loading"> {t('確認中...')}</span>}
-              </div>
+              </h2>
               <div className="card-body">
                 {selDate && courseTimeSlots.length === 0 ? (
                   <p className="hint">{t('この日はご案内できる時間帯がありません。別の日をお選びください。')}</p>
@@ -1705,7 +1733,7 @@ export default function Home() {
           {/* 人数 */}
           {showGuestCard && (
             <div className="card" id="card-guest">
-              <div className="card-lbl">
+              <h2 className="card-lbl">
                 {t('👥　人数')}
                 {availLoading && <span className="avail-loading"> {t('確認中...')}</span>}
                 {avail && !availLoading && !isKasshiki && (
@@ -1715,7 +1743,7 @@ export default function Home() {
                       : (capacityModel === 'perStaff' ? ` 対応可能な${staffLabel} ${avail.remainingSeats}${countUnit}` : ` 残り ${avail.remainingSeats}${countUnit}`)}
                   </span>
                 )}
-              </div>
+              </h2>
               <div className="card-body" style={{ position: 'relative' }}>
                 {availLoading && (
                   <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1 }}>
@@ -1723,7 +1751,7 @@ export default function Home() {
                   </div>
                 )}
                 {availErr && !availLoading && (
-                  <div style={{ background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 12px', marginBottom:10, fontSize:13, color:'var(--red)' }}>
+                  <div role="alert" aria-live="polite" style={{ background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 12px', marginBottom:10, fontSize:13, color:'var(--red)' }}>
                     {availErr}
                     <button onClick={() => fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, staffAssignmentEnabled ? selStaff : undefined)}
                       style={{ marginLeft:8, background:'var(--white)', border:'1px solid var(--red)', color:'var(--red)', borderRadius:6, padding:'12px 16px', minHeight:44, minWidth:44, fontSize:13, fontWeight:'bold', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center' }}>
@@ -1799,7 +1827,7 @@ export default function Home() {
                             </label>
                           </div>
                         )}
-                        {wlErr && <div style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
+                        {wlErr && <div role="alert" aria-live="polite" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         {/* キャンセル待ち登録も氏名・電話番号を収集するため、予約確定と同じ同意チェックを
                             必須にする（Apple CEO視点レビューでの指摘：確認画面を経由しないこの経路だけ
                             同意チェックをすり抜けていた） */}
@@ -1886,7 +1914,7 @@ export default function Home() {
                               style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--white)', color:'var(--text)' }} />
                           </div>
                         )}
-                        {wlErr && <div style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
+                        {wlErr && <div role="alert" aria-live="polite" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         {featureFlags.waitlistEnabled && (
                           <>
                             <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginBottom:8, cursor:'pointer' }}>
@@ -1967,7 +1995,7 @@ export default function Home() {
 
           {/* 連絡先 */}
           <div className="card" id="card-contact">
-            <div className="card-lbl">{t('📝　ご連絡先')}</div>
+            <h2 className="card-lbl">{t('📝　ご連絡先')}</h2>
             <div className="card-body">
               <input type="text" value={name} aria-label={t('お名前')}
                 onChange={(e) => { setName(e.target.value); setInputErr('') }}
@@ -2007,7 +2035,7 @@ export default function Home() {
                   プレースホルダー等の固定UI文言は引き続きt()経由で翻訳する。 */}
               {/* Q1 */}
               <div className="card">
-                <div className="card-lbl card-lbl-optional">{`Q1. ${q1Question}`}</div>
+                <h3 className="card-lbl card-lbl-optional">{`Q1. ${q1Question}`}</h3>
                 <div className="card-body">
                   <div className="q-btn-row">
                     {q1Options.map(opt => (
@@ -2026,7 +2054,7 @@ export default function Home() {
 
               {/* Q2 */}
               <div className="card">
-                <div className="card-lbl card-lbl-optional">{`Q2. ${q3Question}`}</div>
+                <h3 className="card-lbl card-lbl-optional">{`Q2. ${q3Question}`}</h3>
                 <div className="card-body">
                   <div className="q-btn-row">
                     {q3Options.map(opt => (
@@ -2046,7 +2074,7 @@ export default function Home() {
               {/* ご指名（担当者を指名できる業態のみ表示） */}
               {staffAssignmentEnabled && staffRoster.length > 0 && (
                 <div className="card">
-                  <div className="card-lbl card-lbl-optional">{t('🔖 ご指名（任意）')}</div>
+                  <h3 className="card-lbl card-lbl-optional">{t('🔖 ご指名（任意）')}</h3>
                   <div className="card-body">
                     <div className="q-btn-row" style={{ opacity: availLoading ? 0.6 : 1 }}>
                       <button disabled={availLoading} className={`q-btn${selStaff === '' ? ' sel' : ''}`} aria-pressed={selStaff === ''} onClick={() => { setSelStaff(''); setWlDone(false); setWlErr(''); if (selDate && selTime) fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, undefined) }}>
@@ -2072,7 +2100,7 @@ export default function Home() {
               {/* 同伴者情報（人数が2名以上の場合、名前・アレルギー等を1人ずつ入力できる。飲食店以外向けに設定でOFFにできる） */}
               {companionInfoEnabled && companionCount() >= 2 && (
                 <div className="card">
-                  <div className="card-lbl card-lbl-optional">{t('ご一緒される方のお名前・ご要望等（任意）')}</div>
+                  <h3 className="card-lbl card-lbl-optional">{t('ご一緒される方のお名前・ご要望等（任意）')}</h3>
                   <div className="card-body">
                     {companions.slice(0, companionCount()).map((c, i) => (
                       <div key={i} style={{ display: 'flex', gap: 8, marginBottom: i < companionCount() - 1 ? 8 : 0 }}>
@@ -2093,7 +2121,7 @@ export default function Home() {
 
               {/* ご要望 */}
               <div className="card">
-                <div className="card-lbl card-lbl-optional">{t('その他のご要望（任意）')}</div>
+                <h3 className="card-lbl card-lbl-optional">{t('その他のご要望（任意）')}</h3>
                 <div className="card-body">
                   <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)}
                     placeholder={t('上記以外のご要望があればご記入ください')} />
@@ -2102,7 +2130,7 @@ export default function Home() {
             </>
           )}
 
-          {inputErr && <div className="err mt12">{inputErr}</div>}
+          {inputErr && <div className="err mt12" role="alert" aria-live="polite">{inputErr}</div>}
           <div className="mt16">
             <button className="btn-p" onClick={goConfirm}>{t('確認画面へ　→')}</button>
           </div>
@@ -2116,7 +2144,7 @@ export default function Home() {
       {screen === 'confirm' && (
         <div className="scr">
           <div className="card">
-            <div className="card-lbl">{t('✅　ご予約内容の確認')}</div>
+            <h2 className="card-lbl">{t('✅　ご予約内容の確認')}</h2>
             {!isSimpleMode && (
               <div className="cf-row">
                 <div className="cf-lbl">{itemLabel}</div>
@@ -2155,7 +2183,11 @@ export default function Home() {
             )}
             <div className="cf-row">
               <div className="cf-lbl">{t('お名前')}</div>
-              <div className="cf-val">{name} {lang === 'en' ? '' : '様'}</div>
+              {/* 英語モードでも{name}の後ろに半角スペースが常に1つ残っていた（'様'を省く条件分岐が
+                  文字自体だけを対象にしており、直前の固定スペースが分岐の外にあったため）。
+                  見た目上はほぼ気づかれないが、他のi18n分岐が丁寧に扱われている中でこれだけ雑だった
+                  （Apple CEO視点レビュー・ラウンド42での指摘）。 */}
+              <div className="cf-val">{name}{lang === 'en' ? '' : ' 様'}</div>
             </div>
             <div className="cf-row">
               <div className="cf-lbl">{t('電話番号')}</div>
@@ -2207,14 +2239,14 @@ export default function Home() {
                   {recurringFrequency === 'custom' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 8 }}>
                       <span>{t('間隔')}：</span>
-                      <select value={customIntervalWeeks} onChange={e => setCustomIntervalWeeks(parseInt(e.target.value, 10))} style={{ padding: '6px 10px' }}>
+                      <select value={customIntervalWeeks} onChange={e => setCustomIntervalWeeks(parseInt(e.target.value, 10))} aria-label={t('間隔')} style={{ padding: '6px 10px' }}>
                         {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <option key={n} value={n}>{n}{t('週間ごと')}</option>)}
                       </select>
                     </div>
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                     <span>{t('回数')}：</span>
-                    <select value={recurringCount} onChange={e => setRecurringCount(parseInt(e.target.value, 10))} style={{ padding: '6px 10px' }}>
+                    <select value={recurringCount} onChange={e => setRecurringCount(parseInt(e.target.value, 10))} aria-label={t('回数')} style={{ padding: '6px 10px' }}>
                       {[2, 3, 4, 5, 6, 7, 8].map(n => <option key={n} value={n}>{n}{t('回')}</option>)}
                     </select>
                   </div>
@@ -2238,7 +2270,7 @@ export default function Home() {
               <span>{t('注意事項・キャンセルポリシーを確認する（タップで再表示）')}</span>
             </div>
           ) : null}
-          {cfErr && <div className="err mt12">{cfErr}</div>}
+          {cfErr && <div className="err mt12" role="alert" aria-live="assertive">{cfErr}</div>}
           {/* 機微な自由記述（クリニックの診療内容等）を含みうる項目もあるため、単なる案内リンクではなく
               明示的なチェックボックスでの同意に変更した（Apple CEO視点レビューでの指摘：APPIの要配慮
               個人情報は通知だけでなく事前の明示的同意が必要）。全業態共通の仕組みとして提供する。 */}
@@ -2340,7 +2372,7 @@ export default function Home() {
         <div className="scr">
           {myResNeedsPhone ? (
             <div className="card">
-              <div className="card-lbl">{t('📞　電話番号でご予約を確認')}</div>
+              <h2 className="card-lbl">{t('📞　電話番号でご予約を確認')}</h2>
               <div className="card-body">
                 <p className="hint" style={{ marginBottom: 10 }}>{t('LINEをご利用でないため、ご予約時にご登録いただいたお名前・電話番号でご予約を検索します。')}</p>
                 <input type="text" value={myResNameInput} aria-label={t('お名前')}
@@ -2350,7 +2382,7 @@ export default function Home() {
                 <input type="tel" value={myResPhoneInput} aria-label={t('電話番号')}
                   onChange={(e) => { setMyResPhoneInput(e.target.value); setMyResErr('') }}
                   placeholder={t('電話番号（例：090-0000-0000）')} />
-                {myResErr && <div className="err" style={{ marginTop: 10 }}>{myResErr}</div>}
+                {myResErr && <div className="err" role="alert" aria-live="polite" style={{ marginTop: 10 }}>{myResErr}</div>}
                 <div className="mt16">
                   <button className="btn-p" disabled={myResLoading} onClick={lookupMyResByPhone}>
                     {myResLoading ? t('確認中...') : t('確認する')}
@@ -2368,7 +2400,7 @@ export default function Home() {
               </div>
             </div>
           ) : myResErr ? (
-            <div className="no-res" style={{ color: 'var(--red)' }}>
+            <div className="no-res" role="alert" aria-live="polite" style={{ color: 'var(--red)' }}>
               {myResErr}<br />
               📞 <a href={telHref(bizPhone)} style={{ color: 'var(--green)', fontWeight: 'bold' }}>{bizPhone}</a>
             </div>
@@ -2444,7 +2476,7 @@ export default function Home() {
                     )}
                   </div>
                 )}
-                {seriesCancelErr && seriesCancelErrId === res.seriesId && <div className="err" style={{ marginTop: 4 }}>{seriesCancelErr}</div>}
+                {seriesCancelErr && seriesCancelErrId === res.seriesId && <div className="err" role="alert" aria-live="polite" style={{ marginTop: 4 }}>{seriesCancelErr}</div>}
                 {/* 見積/承認フロー：予約自体のステータスとは独立（辞退しても予約自体は残る）。
                     「提示済み」の間だけ承諾・辞退の操作を出す。 */}
                 {res.estimateStatus === '提示済み' && (
@@ -2481,7 +2513,7 @@ export default function Home() {
                         </div>
                       </div>
                     )}
-                    {estimateRespondErr && estimateRespondErrId === res.id && <div className="err" style={{ marginTop: 6 }}>{estimateRespondErr}</div>}
+                    {estimateRespondErr && estimateRespondErrId === res.id && <div className="err" role="alert" aria-live="polite" style={{ marginTop: 6 }}>{estimateRespondErr}</div>}
                   </div>
                 )}
                 {(res.estimateStatus === '承諾済み' || res.estimateStatus === '辞退済み') && (
@@ -2533,7 +2565,7 @@ export default function Home() {
                         </div>
                         <textarea rows={2} value={lateReqMsg} onChange={e => setLateReqMsg(e.target.value)}
                           placeholder={visitText('ご希望の内容（例：来店時間を19時に変更したい）')} />
-                        {lateReqErr && <div className="err" style={{ marginTop: 6 }}>{lateReqErr}</div>}
+                        {lateReqErr && <div className="err" role="alert" aria-live="polite" style={{ marginTop: 6 }}>{lateReqErr}</div>}
                         {/* この依頼文（自由記述）も新たに収集する個人情報のため、予約確定と同じ同意チェックを
                             必須にする（Apple CEO視点レビューでの指摘） */}
                         <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginTop:8, cursor:'pointer' }}>
@@ -2600,7 +2632,7 @@ export default function Home() {
       {screen === 'change' && (
         <div className="scr">
           <div className="card">
-            <div className="card-lbl">{t('📝　変更対象の予約')}</div>
+            <h2 className="card-lbl">{t('📝　変更対象の予約')}</h2>
             <div className="card-body">
               <div className="chg-current">
                 <div style={{ fontSize: 15, fontWeight: 'bold', marginBottom: 6 }}>{fmtDateLang(changingRes?.date, lang)}</div>
@@ -2611,9 +2643,9 @@ export default function Home() {
               </div>
             </div>
           </div>
-          {chgErr && <div className="err mt12">{chgErr}</div>}
+          {chgErr && <div className="err mt12" role="alert" aria-live="polite">{chgErr}</div>}
           <div className="card" id="card-chg-date">
-            <div className="card-lbl">{visitText('📅　新しいご来店日')}</div>
+            <h2 className="card-lbl">{visitText('📅　新しいご来店日')}</h2>
             <div className="card-body">
               <CustomerCalendar
                 year={calYear} month={calMonth}
@@ -2630,7 +2662,7 @@ export default function Home() {
           </div>
           {chgDate && (
             <div className="card" id="card-chg-time">
-              <div className="card-lbl">{visitText('⏰　新しい来店時間')}</div>
+              <h2 className="card-lbl">{visitText('⏰　新しい来店時間')}</h2>
               <div className="card-body" style={{ position: 'relative' }}>
                 {availLoading && (
                   <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1 }}>
@@ -2659,7 +2691,7 @@ export default function Home() {
               変更フローに実装漏れがあった、繰り返しのパターン）。 */}
           {chgDate && chgTime && guestCountEnabled && (
             <div className="card" id="card-chg-guest">
-              <div className="card-lbl">{t('👥　人数')}</div>
+              <h2 className="card-lbl">{t('👥　人数')}</h2>
               <div className="card-body" style={{ position: 'relative' }}>
                 {availLoading && (
                   <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1 }}>
@@ -2729,7 +2761,7 @@ export default function Home() {
                             </label>
                           </div>
                         )}
-                        {wlErr && <div style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
+                        {wlErr && <div role="alert" aria-live="polite" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginBottom:8, cursor:'pointer' }}>
                           <input type="checkbox" checked={privacyConsent} onChange={(e) => setPrivacyConsent(e.target.checked)} style={{ marginTop:2 }} />
                           <span>{t('ご入力いただいた情報の取り扱い（')}<a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={openPrivacyLink} style={{ color:'var(--info-text)', textDecoration:'underline' }}>{t('こちら')}</a>{t('）に同意します')}</span>
@@ -2769,7 +2801,7 @@ export default function Home() {
                               style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--white)', color:'var(--text)' }} />
                           </div>
                         )}
-                        {wlErr && <div style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
+                        {wlErr && <div role="alert" aria-live="polite" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         {featureFlags.waitlistEnabled && (
                           <>
                             <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginBottom:8, cursor:'pointer' }}>
@@ -2798,7 +2830,7 @@ export default function Home() {
             </div>
           )}
           <div className="card">
-            <div className="card-lbl">{t('💬　伝言・要望（任意）')}</div>
+            <h3 className="card-lbl">{t('💬　伝言・要望（任意）')}</h3>
             <div className="card-body">
               <textarea rows={3} value={chgMsg} onChange={(e) => setChgMsg(e.target.value)}
                 placeholder={t('変更に際してのご要望や伝言があればご記入ください')} />
@@ -2824,7 +2856,7 @@ export default function Home() {
       {screen === 'chgconfirm' && (
         <div className="scr">
           <div className="card">
-            <div className="card-lbl">{t('🔄　変更内容の確認')}</div>
+            <h2 className="card-lbl">{t('🔄　変更内容の確認')}</h2>
             <div className="cf-row">
               <div className="cf-lbl">{t('変更前')}</div>
               <div className="cf-val" style={{ color: 'var(--sub)' }}>
@@ -2847,7 +2879,7 @@ export default function Home() {
           <div className="policy">
             ⚠️ {deadlineLabel(chgDate) || t('変更後の予約日が受付期限を過ぎている場合はキャンセル料が発生することがあります。')}
           </div>
-          {chgcfErr && <div className="err mt12">{chgcfErr}</div>}
+          {chgcfErr && <div className="err mt12" role="alert" aria-live="assertive">{chgcfErr}</div>}
           {/* 新規予約確認画面（1871行目付近）・期限後変更依頼（2037行目付近）には既にある明示的な同意
               チェックボックスが、性質が同じ「伝言・要望（自由記述）」を送信するこの変更確定画面にだけ
               存在しなかった（Apple CEO・ランダム客層の両視点が独立発見・ラウンド30での指摘）。 */}

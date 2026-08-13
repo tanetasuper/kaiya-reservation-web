@@ -1031,6 +1031,12 @@ function SetupWizard({ onClose, onApply }) {
   }
 
   const needsStaff = preset && preset.settings.capacityModel === 'perStaff'
+  // 確認画面の警告文言は、以前preset.settings.staffLabel/countUnit（プリセットの生の既定値）を
+  // 直接参照していたため、質問（Q_STAFF_LABEL等）で既定と異なる呼び方（例：クリニックで「医師」→
+  // 「施術者」に変更）を選んでも、警告文には反映されず元の既定値のまま表示され続けるdriftがあった
+  // （業種経営者陣視点レビュー・第42回での指摘）。実際に適用される設定（質問の回答を反映した値）を
+  // 使うように修正する。
+  const resolvedSettings = preset ? { ...preset.settings, ...buildResult().settingsPatch } : {}
   const categories = [...new Set(VERTICAL_PRESETS.map(p => p.category))]
 
   return (
@@ -1130,7 +1136,7 @@ function SetupWizard({ onClose, onApply }) {
             </div>
             {needsStaff && (
               <div style={{ background:'var(--amber-bg)', border:'1px solid var(--amber-border)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'var(--amber-text)', marginBottom:12 }}>
-                ⚠️ この業種は「{preset.settings.staffLabel || '担当者'}単位」の容量管理です。適用後、設定タブの一覧に最低1{preset.settings.countUnit || '名'}登録しないと、お客様の予約が全て「対応不可」になります。
+                ⚠️ この業種は「{resolvedSettings.staffLabel || '担当者'}単位」の容量管理です。適用後、設定タブの一覧に最低1{resolvedSettings.countUnit || '名'}登録しないと、お客様の予約が全て「対応不可」になります。
               </div>
             )}
             <div style={{ fontSize:11, color:'var(--text-faint)', marginBottom:16 }}>適用後もまだ保存されていません。「設定」タブと「配信設定」タブ、両方の保存ボタンを押すまで反映されません。</div>
@@ -3219,9 +3225,21 @@ export default function Admin() {
                         </button>
                       </div>
                       {presetChoice && (
-                        <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:8 }}>
-                          {VERTICAL_PRESETS.find(p => p.key === presetChoice)?.hint}
-                        </div>
+                        <>
+                          <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:8 }}>
+                            {VERTICAL_PRESETS.find(p => p.key === presetChoice)?.hint}
+                          </div>
+                          {/* 導入ウィザードのconfirmステップ（1119行目付近）と同じ上書きリスクがこの
+                              「質問なしで直接適用」経路にも存在するのに、以前はwindow.confirm()の文言
+                              だけで案内していた。この経路は「詳しい方向け」を名乗る分、既に運用中の
+                              店舗が触る可能性がウィザードより高く、むしろ強めの警告が要るのに逆に
+                              目立たない扱いだった（テスト全部隊・Apple CEO視点レビュー・ラウンド42での
+                              指摘）。ウィザード側と同じ常時表示のアンバー警告を、確認ダイアログを開く前の
+                              段階で出す（window.confirm自体は最終確認として残す）。 */}
+                          <div style={{ background:'var(--amber-bg)', border:'1px solid var(--amber-border)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'var(--amber-text)', marginTop:8 }}>
+                            ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。「適用する」を押すと「{VERTICAL_PRESETS.find(p => p.key === presetChoice)?.label}」プリセットの設定項目（容量管理方式・受付締切・通知の既定表示等）を丸ごと上書きします。運用中の設定を一部だけ見直したい場合は、「設定」「配信設定」タブから個別に変更することをおすすめします。
+                          </div>
+                        </>
                       )}
                     </div>
                   )}
@@ -3564,6 +3582,20 @@ export default function Admin() {
                         placeholder="来店"
                         style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
                       <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>予約画面・LINE通知・メールの「ご来店」等の文言に使われます（クリニックなら「来院」、面接なら「来訪」等）</div>
+                    </div>
+                    <div>
+                      {/* countUnit（残数・人数の単位）は予約画面の残席表示・人数選択ボタン、管理画面の
+                          担当者一覧・受付停止枠・期間限定増席枠等、コード側では既に広く使われていたが、
+                          この設定タブには一度も編集用の入力欄が存在しなかった（業態プリセット適用時にのみ
+                          設定される値で、直接編集する手段が無かった）。そのため、上の「呼び方」欄で
+                          staffLabelを「リフト」等の資産名にカスタマイズしても、countUnitは「名」のまま
+                          追従せず「対応可能なリフト 3名」のような不自然な表示になる実害があった
+                          （業種経営者陣視点レビュー・第42回での指摘：車修理工場のリフト単位運用を想定）。 */}
+                      <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>残数・人数表示の単位（名・台・件等に変更可）</label>
+                      <input value={settings.countUnit || ''} onChange={e => setSettings(s => ({ ...s, countUnit: e.target.value }))}
+                        placeholder="名"
+                        style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
+                      <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>予約画面の残席表示・人数選択ボタン、管理画面の{settings.staffLabel || '担当者'}一覧・受付停止枠等に使われます（レンタカーの車両、整備工場のリフト等「台」で数える資産を{settings.staffLabel || '担当者'}として登録する場合はここを「台」に変更してください）</div>
                     </div>
                     {settings.bookingMode === 'simple' && (
                       <>
@@ -4034,7 +4066,7 @@ export default function Admin() {
                             <Field label={`${settings.itemLabel || 'コース'}名`}><input type="text" value={editCourse.name} style={iStyle} onChange={e=>setEditCourse(c=>({...c,name:e.target.value}))} /></Field>
                             <Field label="価格（税込・円）"><input type="number" value={editCourse.price} style={iStyle} onChange={e=>setEditCourse(c=>({...c,price:parseInt(e.target.value)||0}))} /></Field>
                             <Field label="説明文" span><input type="text" value={editCourse.description} style={iStyle} onChange={e=>setEditCourse(c=>({...c,description:e.target.value}))} /></Field>
-                            <Field label="所要時間（分）※1439分（24時間)未満のみ対応"><input type="number" max="1439" value={editCourse.duration} style={iStyle} onChange={e=>setEditCourse(c=>({...c,duration:parseInt(e.target.value)||0}))} /></Field>
+                            <Field label="所要時間（分）※1439分（24時間)未満のみ対応"><input type="number" min="1" max="1439" value={editCourse.duration} style={iStyle} onChange={e=>setEditCourse(c=>({...c,duration:parseInt(e.target.value)||0}))} /></Field>
                             <Field label="食事タイプ">
                               <CustomSelect value={editCourse.mealType||'dinner'} style={sStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
                                 <option value="lunch">ランチ</option>
@@ -4095,7 +4127,7 @@ export default function Admin() {
                         <Field label={`${settings.itemLabel || 'コース'}名`}><input type="text" value={newCourse.name} placeholder={`例：スタンダード${settings.itemLabel || 'コース'}`} style={iStyle} onChange={e=>setNewCourse(c=>({...c,name:e.target.value}))} /></Field>
                         <Field label="価格（税込・円）"><input type="number" value={newCourse.price} placeholder="11000" style={iStyle} onChange={e=>setNewCourse(c=>({...c,price:e.target.value}))} /></Field>
                         <Field label="説明文" span><input type="text" value={newCourse.description} placeholder={`${settings.itemLabel || 'コース'}の内容や特徴を入力`} style={iStyle} onChange={e=>setNewCourse(c=>({...c,description:e.target.value}))} /></Field>
-                        <Field label="所要時間（分）※1439分（24時間)未満のみ対応"><input type="number" max="1439" value={newCourse.duration} placeholder="150" style={iStyle} onChange={e=>setNewCourse(c=>({...c,duration:e.target.value}))} /></Field>
+                        <Field label="所要時間（分）※1439分（24時間)未満のみ対応"><input type="number" min="1" max="1439" value={newCourse.duration} placeholder="150" style={iStyle} onChange={e=>setNewCourse(c=>({...c,duration:e.target.value}))} /></Field>
                         <Field label="食事タイプ">
                           <CustomSelect value={newCourse.mealType||'dinner'} style={sStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
                             <option value="lunch">ランチ</option>
