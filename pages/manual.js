@@ -63,7 +63,7 @@ function ManualContent({ s, loadErr }) {
   const guestCountOn = !s || s.guestCountEnabled !== false
   const waitlistOn = !!(s && s.featureFlags && s.featureFlags.waitlistEnabled)
   const kasshikiOn = !!(s && s.featureFlags && s.featureFlags.kasshikiEnabled)
-  const bizName = (s && s.restaurantName) || '貝屋和光'
+  const bizName = (s && s.restaurantName) || '店舗'
   // 導入ウィザード（admin.js）で業種ごとに設定できる呼び方（スタイリスト・整備士・車両等）。
   // admin.js側の画面表示もこの値を使うようになったため、マニュアルもここに合わせて一致させる。
   const itemPeople = (s && s.staffLabel) || '担当者'

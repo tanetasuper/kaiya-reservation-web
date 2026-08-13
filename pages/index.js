@@ -10,10 +10,28 @@ const LIFF_ID = process.env.NEXT_PUBLIC_LIFF_ID || '2010107032-v35Ka2mS'
 const TIME_SLOTS = ['17:00', '17:30', '18:00', '18:30', '19:00', '19:30', '20:00', '20:30', '21:00']
 const STAY_MIN = 150
 
-function addMin(t, m) {
+// 検索エンジン向けの構造化データ（JSON-LD）のschema.orgタイプが、業態を問わず常に汎用の'LocalBusiness'
+// 固定だった（累積指摘の総棚卸しでの指摘：汎用予約プラットフォーム化の本旨に反する）。管理画面の
+// 「業種」設定（businessCategory、未選択なら空文字）から、より具体的なschema.orgタイプへマッピングする。
+// 未対応の値・未選択の場合は後方互換で従来通り'LocalBusiness'のまま。
+const BUSINESS_CATEGORY_SCHEMA_TYPES = {
+  restaurant: 'Restaurant', salon: 'HairSalon', clinic: 'MedicalBusiness',
+  repair: 'AutoRepair', rental: 'RentalCarReservation', leisure: 'TouristAttraction',
+  lodging: 'LodgingBusiness', fitness: 'ExerciseGym',
+}
+
+// Code.gs側のformatEndTimeForDisplay（複数日にわたるレンタル等で日をまたぐ場合に「（+N日）」を付ける
+// 実装）が既に存在するのに、お客様画面側のこの関数だけ単純な分加算のみで日またぎに対応しておらず、
+// 24時間を超えると「55:30」のような無意味な時刻がそのまま確認画面・変更フローに表示されていた
+// （審判団バックログ一括レビューでの指摘）。同じアルゴリズムを移植する。
+function addMin(t, m, lang) {
   const [h, mn] = t.split(':').map(Number)
   const tot = h * 60 + mn + m
-  return `${String(Math.floor(tot / 60)).padStart(2, '0')}:${String(tot % 60).padStart(2, '0')}`
+  const dayOffset = Math.floor(tot / 1440)
+  const wrapped = ((tot % 1440) + 1440) % 1440
+  const timeStr = `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`
+  if (dayOffset <= 0) return timeStr
+  return timeStr + (lang === 'en' ? ` (+${dayOffset}d)` : `（+${dayOffset}日）`)
 }
 
 // コースカード・確認画面で共通利用する所要時間の表示（ランダム顧客層視点レビュー：英語モードで
@@ -46,6 +64,19 @@ function buildOpeningHoursSpec(dailyHours) {
 }
 
 function telHref(phone) { return 'tel:' + (phone || '').replace(/[^0-9]/g, '') }
+
+// これまでフォーム全体に<form>タグが無く、電話番号・メールアドレスとも「空欄でないか」しか
+// チェックしていなかった。特にメールアドレスは、LINEを使わないゲストのお客様にとって唯一の
+// 確認・変更・キャンセル手段としてこの画面自身が案内しているにもかかわらず、typo（例：
+// test@gmial.con）でも何のエラーも出さずに送信できてしまい、確認メールが届かないまま気づけない
+// 実害があった（ランダム客層視点レビュー・ラウンド29での指摘）。バックエンド（isValidEmailFormat）
+// と同じ緩やかな形式チェックのみ行う（実在確認まではしない）。
+function isValidEmailFormat(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((email || '').trim()) }
+// このシステムは英語モードも提供しており海外のお客様（国番号付き電話番号）も利用しうるため、日本の
+// 携帯・固定電話の桁数（9〜11桁）に限定すると正当な国際電話番号を誤って拒否しかねない。国際電話番号の
+// 標準的な最大桁数（E.164、国番号込みで最大15桁）を上限に、明らかな入力ミス・桁不足だけを弾く
+// 緩やかな範囲にする（厳密な市外局番・番号帯の検証はしない）。
+function isValidPhoneFormat(phone) { const digits = (phone || '').replace(/[^0-9]/g, ''); return digits.length >= 8 && digits.length <= 15 }
 
 // LINEアプリ内ブラウザ（LIFF）では通常の<a target="_blank">が確実に開くとは限らない（LINE公式の
 // 推奨はliff.openWindow()の使用）。プライバシーページへのリンクが同意チェックの唯一の確認手段のため、
@@ -102,6 +133,39 @@ function toYMD(d) {
 function parseDate(s) {
   const parts = String(s).replace(/\//g, '-').split('-')
   return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10))
+}
+
+// 定期予約（シリーズ予約）：選択した来店日を1回目として、frequency（毎週/隔週/毎月/カスタム）に従って
+// count回分の日付リストを組み立てる（サーバー側は日付の計算ロジックを持たず、指定された日付の分だけ
+// createReservationを繰り返すだけに専念する設計。Code.gsのcreateRecurringReservationのコメント参照）。
+// customIntervalWeeks: frequency==='custom'の場合のみ使う、何週間隔か（美容院の6〜8週間隔等、
+// 毎週/隔週/毎月の3択に収まらない利用パターンが業種経営者陣視点レビュー・2026-08-11で指摘された）。
+function buildRecurringDates(firstDate, frequency, count, customIntervalWeeks) {
+  const dates = [firstDate]
+  const base = parseDate(firstDate)
+  for (let i = 1; i < count; i++) {
+    let d
+    if (frequency === 'monthly') {
+      // d.setMonth(d.getMonth()+i)は、開始日が29〜31日の場合に月によって存在しない日付へロールオーバー
+      // してしまい（例：1/31 + 1ヶ月 → 2/31は存在しないため自動的に3/3になる）、「毎月同じ日」という
+      // お客様の意図と全く違う不規則な日付列になる実バグがあった（イーロン・Google CEO・ランダム客層の
+      // 3視点が独立に発見・ラウンド35）。対象月に開始日と同じ日が存在しない場合は、その月の末日に
+      // 揃える（月をまたぐたびに日付がどんどんズレていく副作用を避けるため、常に「元の開始日」を
+      // 基準に計算する）。
+      const targetMonthIndex = base.getMonth() + i
+      const targetYear = base.getFullYear() + Math.floor(targetMonthIndex / 12)
+      const targetMonth = ((targetMonthIndex % 12) + 12) % 12
+      const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate()
+      d = new Date(targetYear, targetMonth, Math.min(base.getDate(), daysInTargetMonth))
+    } else {
+      d = new Date(base)
+      if (frequency === 'weekly') d.setDate(d.getDate() + 7 * i)
+      else if (frequency === 'biweekly') d.setDate(d.getDate() + 14 * i)
+      else if (frequency === 'custom') d.setDate(d.getDate() + 7 * (customIntervalWeeks || 1) * i)
+    }
+    dates.push(`${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`)
+  }
+  return dates
 }
 
 // "HH:mm" はそのまま / "1899-12-30T08:30:00.000Z" のようなISO文字列 → getHours/getMinutes でHH:mm
@@ -221,11 +285,19 @@ function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected,
     const isFuture = dateMax && ymd > dateMax
     const isUnavailable = info.status === 'blocked' || info.status === 'full'
     const isDisabled = isPast || isFuture || isUnavailable
-    cells.push({ d, ymd, info, isDisabled, isSelected: ymd === selected, isToday: ymd === todayYMD })
+    cells.push({ d, ymd, info, isDisabled, isPast, isFuture, isUnavailable, isSelected: ymd === selected, isToday: ymd === todayYMD })
   }
 
-  function mark(info, isDisabled) {
-    if (isDisabled) return { text: info.status === 'blocked' || info.status === 'full' ? '✕' : '', color:'var(--hint)', label:t('満席・休業') }
+  // 以前はisDisabled（過去日・受付終了日・実際の満席/休業をすべて合わせた条件）だけで判定しており、
+  // 単に「今日より前の日付」「予約可能範囲外の未来日」でも一律「満席・休業」という読み上げラベルが
+  // 付いていた。晴眼者には見た目上テキストが空欄（textが''）なので違和感が無いが、スクリーンリーダー
+  // 利用者には実際の空席状況と無関係な誤った理由が伝わっていた（審判団バックログ一括レビューでの指摘）。
+  // 過去日・範囲外の未来日は理由を分けたラベルにする。
+  function mark(cell) {
+    const { info, isPast, isFuture, isUnavailable } = cell
+    if (isUnavailable) return { text:'✕', color:'var(--hint)', label:t('満席・休業') }
+    if (isPast) return { text:'', color:'var(--hint)', label:t('過去の日付のため選択できません') }
+    if (isFuture) return { text:'', color:'var(--hint)', label:t('予約可能な期間外です') }
     if (info.status === 'few')  return { text:'△', color:'var(--kwarn-title)', label:t('残席わずか') }
     if (info.status === 'open') return { text:'○', color:'var(--green)', label:t('空きあり') }
     return { text:'', color:'transparent', label:'' }
@@ -251,7 +323,7 @@ function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected,
         <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:3 }}>
           {cells.map((cell, i) => {
             if (cell === null) return <div key={`e${i}`}/>
-            const mk = mark(cell.info, cell.isDisabled)
+            const mk = mark(cell)
             const colIdx = i % 7
             return (
               <button key={cell.ymd} disabled={cell.isDisabled}
@@ -280,7 +352,10 @@ function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected,
       <div style={{ display:'flex', gap:14, marginTop:10, fontSize:13, flexWrap:'wrap' }}>
         <span style={{ color:'var(--green)', fontWeight:'bold' }}>○ {t('空きあり')}</span>
         <span style={{ color:'var(--kwarn-title)', fontWeight:'bold' }}>△ {t('残席わずか')}</span>
-        <span style={{ color:'var(--red)', fontWeight:'bold' }}>✕ {t('満席/休業')}</span>
+        {/* 以前は凡例だけvar(--red)（赤）だったが、実際のマーク（mark()関数）はvar(--hint)（グレー）で
+            描画しており、凡例と実際の色が食い違っていた（審判団バックログ一括レビューでの指摘）。
+            実際のマーク色に合わせる。 */}
+        <span style={{ color:'var(--hint)', fontWeight:'bold' }}>✕ {t('満席/休業')}</span>
       </div>
     </div>
   )
@@ -297,6 +372,11 @@ export default function Home() {
     return () => clearTimeout(timer)
   }, [screen])
   const [profile, setProfile] = useState(null)
+  // LINEユーザーIDの暗号学的検証（Code.gs側resolveTrustedLineUserId_）に使う、LIFF発行のIDトークン
+  // （JWT）。以前はprofile.userId（秘密情報ではなく、devtools等で第三者にも見える値）だけをそのまま
+  // 「本人証明」としてサーバーへ送っており、他人のuserIdを知るだけでなりすましが可能だった
+  // （Apple CEO・ITコンサル各視点が独立発見・審判団バックログ一括レビュー・ラウンド31でCRITICAL判定）。
+  const [idToken, setIdToken] = useState('')
   const [isGuestMode, setIsGuestMode] = useState(false)
   const [dateMin, setDateMin] = useState('')
   const [dateMax, setDateMax] = useState('')
@@ -309,9 +389,15 @@ export default function Home() {
   const [avail, setAvail] = useState(null)
   const [availLoading, setAvailLoading] = useState(false)
   const [availErr, setAvailErr] = useState('')
+  // 日付/時間/人数を素早く切り替えると、先に発行した古いリクエストの応答が後発リクエストより遅れて
+  // 戻り、新しい選択の結果を古い応答が上書きしてしまう「レース状態」が起こり得た。呼び出しごとに
+  // 連番のリクエストIDを発行し、応答が戻った時点で「自分が最新のリクエストか」を確認してから
+  // state更新する（古い応答は無視する）ガードを追加する（審判団指摘対応）。
+  const availReqIdRef = useRef(0)
 
-  // コース設定（管理画面から取得）
-  const [settingsCourses, setSettingsCourses] = useState([{ name:'季節の貝フルコース', price:11000, description:'旬の貝と野菜をふんだんに使ったコースメニュー', duration:150, mealType:'dinner' }])
+  // コース設定（管理画面から取得）。取得前・取得失敗時に特定店舗の実データが見えてしまわないよう、
+  // 汎用的な空配列を既定にする（2026-08-08、実機テストを受けての一般化対応）。
+  const [settingsCourses, setSettingsCourses] = useState([])
   const [selCourse, setSelCourse] = useState(0)
   const [settingsTimeRanges, setSettingsTimeRanges] = useState([
     { type:'lunch', label:'ランチ', start:'11:30', end:'14:00' },
@@ -329,16 +415,28 @@ export default function Home() {
   })
   // 店舗側が配信設定でON/OFFできる機能フラグ（キャンセル待ち・期限後LINE依頼）。既定は両方trueとして
   // 取得前もボタンを表示し、取得後にOFFなら隠す（取得失敗時に誤って機能を消してしまわないようにする）。
-  const [featureFlags, setFeatureFlags] = useState({ waitlistEnabled: true, lateRequestEnabled: true, kasshikiEnabled: true })
-  // 店名・電話番号等は設定（getSettings）から取得する。取得前・取得失敗時は現行の貝屋和光の値を既定にする
-  // （汎用予約システムとして他店舗に導入する場合はここが管理画面の設定だけで変わる）。
-  const [bizName, setBizName] = useState('貝屋和光')
-  const [bizTagline, setBizTagline] = useState('築地／貝焼き専門店')
+  const [featureFlags, setFeatureFlags] = useState({ waitlistEnabled: true, lateRequestEnabled: true, kasshikiEnabled: true, recurringBookingEnabled: true })
+  // 店名・電話番号等は設定（getSettings）から取得する。取得前・取得失敗時は特定店舗の実データが
+  // 表示され続けないよう、汎用的な空値を既定にする（2026-08-08、実機テストを受けての一般化対応：
+  // 以前は取得失敗時に貝屋和光の実際の電話番号・紹介文が無期限に表示され続けてしまっていた）。
+  const [bizName, setBizName] = useState('店舗')
+  const [bizTagline, setBizTagline] = useState('')
   const [bizAddress, setBizAddress] = useState('')
+  const [businessCategory, setBusinessCategory] = useState('')
   const [storeImageUrl, setStoreImageUrl] = useState('')
-  const [bizPhone, setBizPhone] = useState('080-9391-1475')
+  const [bizPhone, setBizPhone] = useState('')
   const [q1Options, setQ1Options] = useState(['誕生日・記念日', '接待・会食', '友人・仲間と', '家族で', 'デート', 'その他'])
   const [q3Options, setQ3Options] = useState(['グーグルマップ', 'インターネット検索', '食べログ', 'SNS', '知人の紹介', 'その他'])
+  // 以前はq1/q3が固定文字列'その他'と一致するかどうかで自由記入欄の表示を判定していたが、店舗が
+  // 管理画面でこの選択肢のラベル文言自体を自由に変更・削除できるため、「その他」という語を変更されると
+  // 自由記入欄が無音で出なくなっていた（審判団バックログ一括レビューでの指摘）。全11業態プリセットが
+  // 例外なく「自由記入用の選択肢」を配列の最後に置く規約になっているため、文字列の中身ではなく
+  // 配列内の位置（最後の要素かどうか）で判定する。
+  function isQ1Other(val) { return !!val && q1Options.length > 0 && val === q1Options[q1Options.length - 1] }
+  function isQ3Other(val) { return !!val && q3Options.length > 0 && val === q3Options[q3Options.length - 1] }
+  // 質問文言自体も店舗側で変更できるようにする（選択肢=q1Options/q3Optionsとは別。ユーザー指摘・2026-08-08）。
+  const [q1Question, setQ1Question] = useState('ご利用目的（任意）')
+  const [q3Question, setQ3Question] = useState('どのように当店を知りましたか（任意）')
   // 'course'=コース制（懐石・フルコース等、既定）／'simple'=コース選択なし（定食・a-la-carte等の業態向け）
   const [bookingMode, setBookingMode] = useState('course')
   // 選択項目の呼び方（飲食店「コース」／サロン「サービス」／自動車修理「修理プラン」／病院「診療内容」等、業態に合わせて変更できる）
@@ -352,6 +450,10 @@ export default function Home() {
   // （テスト全部隊レビューで指摘）。
   const [staffLabel, setStaffLabel] = useState('担当者')
   const [countUnit, setCountUnit] = useState('名')
+  // 「ご来店」が全業態共通で使われ続けていた（クリニックの「ご来院」、宿泊業の「ご来館」等）。
+  // staffLabel/countUnitと同じ考え方で店舗設定から取得する（累積指摘の総棚卸しでの指摘、ユーザー承認済み）。
+  const [visitNoun, setVisitNoun] = useState('来店')
+  const [visitNounEn, setVisitNounEn] = useState('visit')
   const [guestCountEnabled, setGuestCountEnabled] = useState(true)
   const [fixedGuestCount, setFixedGuestCount] = useState('1')
   const [companionInfoEnabled, setCompanionInfoEnabled] = useState(true)
@@ -398,7 +500,9 @@ export default function Home() {
   const [q3, setQ3] = useState('')
   const [q3Other, setQ3Other] = useState('')
   const [notes, setNotes] = useState('')
-  const [showOptional, setShowOptional] = useState(false)
+  // 以前は既定で折りたたんでいたが、ユーザー指示により「任意の質問（ご指名・ご利用目的等）は
+  // 初めから表示しておく」方針に変更（2026-08-08）。
+  const [showOptional, setShowOptional] = useState(true)
   const [companions, setCompanions] = useState([{ name: '', allergy: '' }])
   const [inputErr, setInputErr] = useState('')
   const [cfErr, setCfErr] = useState('')
@@ -406,10 +510,25 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState({ detail: '', id: '', pending: false, error: '', backScreen: 'confirm', title: 'ご予約を承りました' })
 
+  // 定期予約（シリーズ予約、データモデル大改修の一部、ユーザー承認済み・2026-08-11）。既定はOFFで、
+  // 通常の単発予約フロー（date/time/guests等の既存state・画面遷移）は一切変更しない、確認画面での
+  // 追加オプションとして実装する。貸切・大人数相談（isKasshiki/isKonsult）では選べないようにする
+  // （買い切り・要相談枠を定期的に繰り返す想定が薄く、組み合わせると案内が複雑になるため）。
+  const [isRecurring, setIsRecurring] = useState(false)
+  const [recurringFrequency, setRecurringFrequency] = useState('weekly') // 'weekly' | 'biweekly' | 'monthly' | 'custom'
+  const [recurringCount, setRecurringCount] = useState(4)
+  // カスタム頻度（美容院の6〜8週間隔等、業種経営者陣視点レビュー・2026-08-11で指摘された既存3択の隙間）。
+  const [customIntervalWeeks, setCustomIntervalWeeks] = useState(6)
+
   // キャンセル待ち
   const [wlSubmitting, setWlSubmitting] = useState(false)
   const [wlDone, setWlDone] = useState(false)
   const [wlErr, setWlErr] = useState('')
+  // 時間帯・担当者制の業態（capacityModel!=='daily'）では、キャンセル待ちが日付単位でしか動いておらず、
+  // 無関係な時間・担当者の空きでも通知が飛んでしまっていた（業種経営者陣視点レビュー・ラウンド30での
+  // 指摘、ユーザー承認済み）。お客様自身に「厳密にこの時間・担当者」か「同じ日ならいつでも」かを
+  // 選んでもらう。'daily'業態（元々日付単位で正しい設計）では常に'anyTime'で送る。
+  const [wlNotifyCondition, setWlNotifyCondition] = useState('anyTime')
 
   // 予約一覧
   const [myRes, setMyRes] = useState([])
@@ -417,6 +536,18 @@ export default function Home() {
   const [cancelId, setCancelId] = useState(null)
   const [cancelingId, setCancelingId] = useState(null)
   const [cancelErr, setCancelErr] = useState('')
+  // 見積/承認フロー（データモデル大改修の一部、2026-08-10）
+  const [estimateRespondingId, setEstimateRespondingId] = useState(null)
+  const [estimateRespondErr, setEstimateRespondErr] = useState('')
+  // 承諾・辞退とも、単発キャンセルと同じ「本当に良いか」の一段階確認を挟む（テスト全部隊レビュー・
+  // 2026-08-11で、確認無しの即時実行だと誤操作リスクが高いと複数視点から指摘されたための対応）。
+  const [estimateConfirm, setEstimateConfirm] = useState(null) // { id, accept } | null
+  // 定期予約（シリーズ予約）：まとめてキャンセル
+  const [seriesCancelingId, setSeriesCancelingId] = useState(null)
+  const [seriesCancelErr, setSeriesCancelErr] = useState('')
+  // シリーズ一括キャンセルは単発キャンセルより影響範囲が大きい（最大8件）のに確認ダイアログが
+  // 無かった（テスト全部隊レビュー・2026-08-11で複数視点から指摘）。単発と同じ二段階確認にする。
+  const [seriesCancelConfirmId, setSeriesCancelConfirmId] = useState(null)
   const [myResErr, setMyResErr] = useState('')
   const [myResNeedsPhone, setMyResNeedsPhone] = useState(false)
   const [myResPhoneInput, setMyResPhoneInput] = useState('')
@@ -442,6 +573,13 @@ export default function Home() {
 
   const effectiveGuests = !guestCountEnabled ? fixedGuestCount : (selGuest === 'konsult' ? '' : selGuest)
   const t = useMemo(() => makeT(lang), [lang])
+  // t()の辞書は固定の日本語キー（'ご来店日'等）に対する翻訳のため、業態によって変わるvisitNoun
+  // （来店/来院/来館等）を含む文言だけはt()の辞書照合をバイパスし、日本語モードでは実行時に
+  // 「来店」を置き換える（英語モードは既存の辞書訳をそのまま使う。多くは"Date"/"Time"のように
+  // そもそも"visit"という語を含まないため、visitNounEnの出番は無い）。
+  function visitText(jaTemplate) {
+    return lang === 'en' ? t(jaTemplate) : jaTemplate.replace(/来店/g, visitNoun)
+  }
   const showTimeCard = !!selDate
   const showGuestCard = guestCountEnabled && !!(selDate && selTime)
 
@@ -466,11 +604,15 @@ export default function Home() {
   function buildNotesPayload() {
     const parts = []
     if (companionCount() >= 2) {
+      // 「1人目」「【同伴者情報】」がlang分岐なしで常に日本語固定になっていた。この関数の戻り値は
+      // 確認画面（1939行目付近）でお客様本人にも表示されるため、英語モードの画面に日本語の見出しが
+      // 混在してしまっていた（審判団バックログ一括レビューでの指摘）。同伴者名の入力欄プレースホルダー
+      // （1737行目付近）には既にlang分岐があるのに、こちらだけ漏れていた。
       const rows = companions.slice(0, companionCount()).map((c, i) => {
-        const label = c.name.trim() || `${i + 1}人目`
+        const label = c.name.trim() || (lang === 'en' ? `Guest ${i + 1}` : `${i + 1}人目`)
         return c.allergy.trim() ? `${label}：${c.allergy.trim()}` : null
       }).filter(Boolean)
-      if (rows.length) parts.push('【同伴者情報】\n' + rows.join('\n'))
+      if (rows.length) parts.push((lang === 'en' ? 'Companion info' : '【同伴者情報】') + '\n' + rows.join('\n'))
     }
     if (notes.trim()) parts.push(notes.trim())
     return parts.join('\n\n')
@@ -612,7 +754,7 @@ export default function Home() {
     }
     if (isHol) return `※ 祝日のため${mo}/${da}（${rule.daysBefore}日前）${rule.time}まで受付`
     if (dow === 0 || dow === 6) return `※ 土日のため${mo}/${da}（${rule.daysBefore}日前）${rule.time}まで受付`
-    return `※ 来店日の${rule.daysBefore}日前（${mo}/${da}）${rule.time}まで受付`
+    return `※ ${visitNoun}日の${rule.daysBefore}日前（${mo}/${da}）${rule.time}まで受付`
   }
 
   function isChangeCancelable(dateStr) {
@@ -639,14 +781,6 @@ export default function Home() {
     if (!avail || availLoading) return false
     return !avail.canKasshikiConsult
   }
-  function guestLabel(n) {
-    if (!avail || availLoading) return `${n}名`
-    if (n === 1 && !avail.canBook1) return `1名\n×`
-    if (capacityModel === 'perStaff') return (n >= 2 && !avail.canBook2to5) ? `${n}名\n満席` : `${n}名`
-    if (n >= 2 && n <= 5 && n > avail.remainingSeats) return `${n}名\n満席`
-    return `${n}名`
-  }
-
   // t()は日本語原文をキーにした辞書引きのため、staffLabelのように店舗ごとに自由入力される
   // 動的な文言を埋め込んだテンプレート文字列をt()に渡すと、既定値「担当者」以外の呼び方（例：
   // 「スタイリスト」「施術者」等）にカスタマイズしている店舗では辞書キーが一致せず、英語モードでも
@@ -664,19 +798,24 @@ export default function Home() {
   // ===== 空席取得 =====
   async function fetchAvailability(date, time, course, staff) {
     if (!date) return
+    const reqId = ++availReqIdRef.current
     setAvailLoading(true)
     setAvail(null)
     setAvailErr('')
     try {
       const r = await api.getAvailability(date, time, course, staff)
+      // 応答が戻った時点で、既にこれより新しいリクエストが発行済みなら（=このリクエストは古い）、
+      // 結果を無視する（新しい選択の表示を古い応答で上書きしないため）。
+      if (reqId !== availReqIdRef.current) return
       setAvail(r)
     } catch {
+      if (reqId !== availReqIdRef.current) return
       setAvail(null)
       setAvailErr(capacityModel === 'perStaff'
         ? staffCheckFailText()
         : t('残席の確認に失敗しました。電波の良い場所でもう一度お試しください。'))
     }
-    setAvailLoading(false)
+    if (reqId === availReqIdRef.current) setAvailLoading(false)
   }
 
   // ===== 受付期限後の変更・キャンセルをLINEで依頼 =====
@@ -713,11 +852,17 @@ export default function Home() {
   // キャンセル待ち登録のたびに送信される日付が壊れていた）。
   async function joinWaitlist(targetDate, targetGuests) {
     if (!name.trim() || !phone.trim()) { setWlErr(t('お名前と電話番号を入力してください')); return }
+    if (!isValidPhoneFormat(phone)) { setWlErr(t('電話番号の形式が正しくありません')); return }
     setWlSubmitting(true)
     setWlErr('')
     try {
+      // 'daily'業態は元々「日付単位」の空き判定で正しい設計のため、通知条件は常に'anyTime'（同じ日なら
+      // いつでも通知）で送る。時間帯・担当者制（timeSlot/perStaff）だけ、お客様が選んだ通知条件と
+      // 現在選択中の時間・担当者を一緒に送る（業種経営者陣視点レビュー・ラウンド30での指摘、
+      // ユーザー承認済み）。
+      const notifyCondition = capacityModel === 'daily' ? 'anyTime' : wlNotifyCondition
       const r = await api.joinWaitlist({
-        lineUserId: profile?.userId || '',
+        lineUserId: profile?.userId || '', idToken,
         name: name.trim(), phone: phone.trim(),
         // ||ではなく明示的なundefinedチェックにする。変更フローはchgGuestsが未選択（''）の状態でも
         // このカードを表示・送信できてしまうため、'||'だと''が偽値としてeffectiveGuests（新規予約
@@ -725,6 +870,9 @@ export default function Home() {
         // 変更フローからの登録なのに別フローの人数が紛れ込む（ランダム客層視点レビューでの指摘）。
         date: targetDate !== undefined ? targetDate : selDate,
         guests: targetGuests !== undefined ? targetGuests : (effectiveGuests || ''),
+        time: targetDate !== undefined ? undefined : selTime,
+        staff: (targetDate !== undefined || !staffAssignmentEnabled) ? undefined : selStaff,
+        notifyCondition, language: lang,
       })
       if (r.success) setWlDone(true)
       else setWlErr(r.error || t('キャンセル待ちの登録に失敗しました'))
@@ -767,6 +915,7 @@ export default function Home() {
     setInputErr('')
     setWlDone(false)
     setWlErr('')
+    setWlNotifyCondition('anyTime')
     if (d) {
       // 空席取得は祝日データに依存しないため、ensureHolidays()の完了を待たずに並行して開始する。
       // （以前は直列にawaitしていたため、初回のみ祝日取得が最大5秒かかる間、
@@ -777,7 +926,7 @@ export default function Home() {
   }
 
   // LINEログイン後／ゲストモード決定後の共通の画面遷移（URLパラメータでマイ予約に直接遷移する分岐を含む）
-  const proceedAfterAuth = useCallback((userId, isGuest) => {
+  const proceedAfterAuth = useCallback((userId, isGuest, authIdToken) => {
     const goMyRes = new URLSearchParams(window.location.search).get('screen') === 'myres'
     // ゲスト向け確認メールの「マイ予約」深リンク（?screen=myres&guest=1）を踏んだ場合、セッションごとに
     // 変わる仮のゲストIDでは本人の予約と一切紐付かないため、以前はapi.getMyReservations(仮ID)が
@@ -794,7 +943,7 @@ export default function Home() {
       setMyResLoading(true)
       setCancelId(null)
       setScreen('myres')
-      api.getMyReservations(userId).then(r => {
+      api.getMyReservations(userId, undefined, undefined, authIdToken).then(r => {
         setMyRes(r.success ? r.list || [] : [])
       }).catch(() => {
         setMyRes([])
@@ -816,6 +965,9 @@ export default function Home() {
   const initLiff = useCallback(async () => {
     let userId = null
     let isGuestFallback = false
+    // stateのidTokenはsetIdToken()直後の同期的な呼び出し（下記proceedAfterAuth）にはまだ反映されない
+    // （Reactのstate更新は非同期のため）。関数スコープのローカル変数として保持し、そちらを渡す。
+    let currentIdToken = ''
     try {
       await Promise.race([
         window.liff.init({ liffId: LIFF_ID }),
@@ -825,8 +977,13 @@ export default function Home() {
         const p = await window.liff.getProfile()
         setProfile(p)
         userId = p.userId
+        // liff.getIDToken()はLINE側で署名済みのJWTを返す。取得に失敗しても（スコープ未許可等）
+        // 予約フロー自体は継続できるようにし、Code.gs側はidToken未送信時は後方互換の従来方式に
+        // フォールバックする（LINE_CHANNEL_ID未設定の店舗も含め、既存動作を壊さない）。
+        try { currentIdToken = window.liff.getIDToken() || '' } catch (idErr) { console.warn('LIFF getIDToken:', idErr.message) }
+        setIdToken(currentIdToken)
         // リピーター情報はバックグラウンドで取得（画面遷移をブロックしない）
-        api.getCustomerProfile(p.userId).then((cp) => {
+        api.getCustomerProfile(p.userId, currentIdToken).then((cp) => {
           if (cp.found) {
             // 取得が遅れて届いた場合、既に入力済みの内容を上書きしないようfunctional updateで現在値を確認
             if (cp.name) setName((prev) => prev ? prev : String(cp.name))
@@ -852,7 +1009,7 @@ export default function Home() {
       userId = guestId
       isGuestFallback = true
     }
-    proceedAfterAuth(userId, isGuestFallback)
+    proceedAfterAuth(userId, isGuestFallback, currentIdToken)
   }, [proceedAfterAuth])
 
   // 店名・コース一覧・営業時間等はオーナーが設定変更した時だけ変わる、頻繁には変わらないデータのため、
@@ -871,10 +1028,18 @@ export default function Home() {
     if (r.restaurantName) setBizName(r.restaurantName)
     if (r.restaurantTagline) setBizTagline(r.restaurantTagline)
     if (r.restaurantAddress) setBizAddress(r.restaurantAddress)
+    if (r.businessCategory) setBusinessCategory(r.businessCategory)
     if (r.storeImageUrl) setStoreImageUrl(r.storeImageUrl)
     if (r.contactPhone) setBizPhone(r.contactPhone)
-    if (r.q1Options && r.q1Options.length > 0) setQ1Options(r.q1Options)
-    if (r.q3Options && r.q3Options.length > 0) setQ3Options(r.q3Options)
+    // 「この質問自体が不要」な店舗（クリニック等）が選択肢を空にして保存すると、以前は空配列がfalsy
+    // 扱いされてこの代入自体がスキップされ、useStateの初期値（貝屋和光＝飲食店向けの既定選択肢）が
+    // 残り続けてしまっていた。店舗が意図的に空にした設定が、業態の合わない飲食店の選択肢へすり替わって
+    // 表示される実害があった（Appleデザインチーム視点レビュー・ラウンド30での指摘）。undefined
+    // （サーバーが未対応の古いキャッシュ等）の場合だけ既定値を維持し、空配列は空配列としてそのまま使う。
+    if (r.q1Options !== undefined) setQ1Options(r.q1Options)
+    if (r.q3Options !== undefined) setQ3Options(r.q3Options)
+    if (r.q1Question) setQ1Question(r.q1Question)
+    if (r.q3Question) setQ3Question(r.q3Question)
     if (r.bookingMode) setBookingMode(r.bookingMode)
     if (r.itemLabel) setItemLabel(r.itemLabel)
     if (r.itemIcon) setItemIcon(r.itemIcon)
@@ -882,6 +1047,8 @@ export default function Home() {
     if (r.capacityModel) setCapacityModel(r.capacityModel)
     if (r.staffLabel) setStaffLabel(r.staffLabel)
     if (r.countUnit) setCountUnit(r.countUnit)
+    if (r.visitNoun) setVisitNoun(r.visitNoun)
+    if (r.visitNounEn) setVisitNounEn(r.visitNounEn)
     if (r.guestCountEnabled !== undefined) setGuestCountEnabled(!!r.guestCountEnabled)
     if (r.fixedGuestCount) setFixedGuestCount(String(r.fixedGuestCount))
     if (r.companionInfoEnabled !== undefined) setCompanionInfoEnabled(!!r.companionInfoEnabled)
@@ -948,7 +1115,7 @@ export default function Home() {
   }
 
   function goConfirm() {
-    if (!selDate) return errAt('card-date', t('ご来店日を選択してください'))
+    if (!selDate) return errAt('card-date', visitText('ご来店日を選択してください'))
     // 変更フロー（2117行目付近）には元々あった「選択日が受付期限を過ぎていないか」の最終チェックが、
     // 新規予約フローのここには無かった（ランダム客層視点レビューでの指摘：過去ラウンドの教訓と逆で、
     // 変更フローには実装済みなのに主フローに実装漏れがあったパターン）。dateMinは初回読み込み時に
@@ -956,22 +1123,31 @@ export default function Home() {
     // ②店舗が締切ルール（settingsCutoffRules）を既定値と異なる設定に変更した場合、のいずれも
     // カレンダー上は選択可能に見えたまま実際の締切を過ぎて送信できてしまっていた。
     if (deadlinePassed(selDate)) return errAt('card-date', t('選択された日付は予約受付期限を過ぎています'))
-    if (!selTime) return errAt('card-time', t('来店時間を選択してください'))
+    if (!selTime) return errAt('card-time', visitText('来店時間を選択してください'))
     if (guestCountEnabled && !selGuest && !isKasshiki) return errAt('card-guest', t('人数を選択してください'))
     if (!String(name).trim()) return errAt('card-contact', t('お名前を入力してください'))
     if (!String(phone).trim()) return errAt('card-contact', t('電話番号を入力してください'))
+    if (!isValidPhoneFormat(phone)) return errAt('card-contact', t('電話番号の形式が正しくありません'))
     if (emailCollectionEnabled && isGuestMode && !String(email).trim()) return errAt('card-contact', t('メールアドレスを入力してください'))
+    if (String(email).trim() && !isValidEmailFormat(email)) return errAt('card-contact', t('メールアドレスの形式が正しくありません'))
     if (avail && !isKasshiki && selGuest) {
       const n = parseInt(selGuest) || 0
       if (capacityModel === 'perStaff') {
         if (n >= 2 && !avail.canBook2to5) return errAt('card-guest', lang === 'en' ? `No ${staffLabel} available for this time slot` : `この時間帯はご案内できる${staffLabel}が見つかりません`)
       } else if (n >= 2 && n > avail.remainingSeats) {
-        return errAt('card-guest', lang === 'en' ? `Only ${avail.remainingSeats} ${countUnit} remaining, so we can't accept a party of ${n}` : `残り${avail.remainingSeats}${countUnit}のため、${n}名様のご予約はお受けできません`)
+        return errAt('card-guest', lang === 'en' ? `Only ${avail.remainingSeats} ${countUnit} remaining, so we can't accept a party of ${n}` : `残り${avail.remainingSeats}${countUnit}のため、${guestsWithUnit(n)}のご予約はお受けできません`)
       }
       if (n === 1 && !avail.canBook1)
-        return errAt('card-guest', t('1名様のご予約はこの日はお受けできません'))
+        return errAt('card-guest', countUnit === '名' ? t('1名様のご予約はこの日はお受けできません') : (lang === 'en' ? `A single ${countUnit} reservation is not available for this date` : `1${countUnit}のご予約はこの日はお受けできません`))
     }
     setInputErr('')
+    // privacyConsentは入力画面上の他の同意チェックボックス（満席日のキャンセル待ちカード・貸切満席
+    // カード等）と単一のstateを共有しているため、そちらでチェックを入れたまま（実際には送信せずに）
+    // 別の日時へ変更してここに来ると、確認画面のチェックボックスが最初からチェック済みの状態で
+    // 表示されてしまっていた。機微な自由記述を含みうる項目への「事前の明示的同意」（APPI要配慮
+    // 個人情報）が実質的に無意味化するため、確認画面へ進むたびに必ずリセットする
+    // （Apple CEO視点レビュー・ラウンド30での指摘）。
+    setPrivacyConsent(false)
     if (bookingNotes) {
       setShowNotesPopup(true)
     } else {
@@ -979,11 +1155,19 @@ export default function Home() {
     }
   }
 
+  // 人数の単位（名/台/件等）が店舗設定で変更できるのに、ボタンラベル（1563行目付近）以外の
+  // 確認画面・完了画面・エラー文言は「名様」がハードコードされたままだった（累積指摘の総棚卸しでの
+  // 指摘）。ボタンラベルと同じcountUnit方式に統一する。「名」の場合のみ既存のt('名様')（敬称付き）を
+  // 使い、店舗独自の単位（台・件等）には敬称を付けない（「2台様」等は不自然なため）。
+  function guestsWithUnit(g) {
+    if (countUnit === '名') return `${g}${t('名様')}`
+    return lang === 'en' ? `${g} ${countUnit}` : `${g}${countUnit}`
+  }
   // 予約済みレコードの人数表示（'未定'＝人数未確定の予約は言語に応じて翻訳表示する。
-  // 生の '未定' 文字列に t('名様') を連結すると英語表示時に "未定 guests" のような
+  // 生の '未定' 文字列に単位を連結すると英語表示時に "未定 guests" のような
   // 言語混在表示になってしまうため、未確定値は必ず t('人数未定') 経由で表示する）
   function guestsDisplay(g) {
-    return (g && g !== '未定') ? `${g}${t('名様')}` : t('人数未定')
+    return (g && g !== '未定') ? guestsWithUnit(g) : t('人数未定')
   }
 
   // ===== 予約送信 =====
@@ -993,32 +1177,52 @@ export default function Home() {
     setPrivacyConsent(false)
     const d = parseDate(selDate)
     const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
-    const guestStr = selGuest === 'konsult' ? t('13名以上・人数未定（ご相談）') : effectiveGuests ? `${effectiveGuests}${t('名様')}` : t('人数未定')
-    const baseDetail = `${fmtDateLang(selDate, lang)}　${selTime}〜${addMin(selTime, selStayMin)}\n${guestStr}${isKasshiki ? t('（貸切）') : ''}`
+    const guestStr = selGuest === 'konsult' ? t('13名以上・人数未定（ご相談）') : effectiveGuests ? guestsWithUnit(effectiveGuests) : t('人数未定')
+    const baseDetail = `${fmtDateLang(selDate, lang)}　${selTime}〜${addMin(selTime, selStayMin, lang)}\n${guestStr}${isKasshiki ? t('（貸切）') : ''}`
     const doneTitle = isKasshiki ? t('貸切お申し込みを受け付けました') : t('ご予約を承りました')
+    const commonPayload = {
+      lineUserId: profile?.userId || 'unknown', idToken,
+      displayName: profile?.displayName || '',
+      pictureUrl: profile?.pictureUrl || '',
+      name: String(name).trim(),
+      phone: String(phone).trim(),
+      time: selTime,
+      guests: effectiveGuests || '未定',
+      course: visibleCourses[selCourse]?.name || itemLabel,
+      isKasshiki,
+      isKonsult,
+      notes: buildNotesPayload(),
+      q1: isQ1Other(q1) ? (q1Other.trim() || q1) : q1,
+      q2: '',
+      q3: isQ3Other(q3) ? (q3Other.trim() || q3) : q3,
+      requestedStaff: staffAssignmentEnabled ? selStaff : '',
+      email: emailCollectionEnabled ? String(email).trim() : '',
+      language: lang,
+    }
+    // 定期予約（シリーズ予約）：貸切・大人数相談時は上のUIで選択自体を出していないが、念のため
+    // ここでも二重にガードする（isKasshiki/isKonsultなら常に通常の単発予約フローに倒す）。
+    const recurringActive = isRecurring && !isKasshiki && !isKonsult
     setDone({ detail: baseDetail, id: '', pending: true, error: '', backScreen: 'confirm', title: doneTitle, pendingApproval: isKasshiki })
     setScreen('done')
     try {
-      const r = await api.createReservation({
-        lineUserId: profile?.userId || 'unknown',
-        displayName: profile?.displayName || '',
-        pictureUrl: profile?.pictureUrl || '',
-        name: String(name).trim(),
-        phone: String(phone).trim(),
-        date: dateStr,
-        time: selTime,
-        guests: effectiveGuests || '未定',
-        course: visibleCourses[selCourse]?.name || itemLabel,
-        isKasshiki,
-        isKonsult,
-        notes: buildNotesPayload(),
-        q1: q1 === 'その他' ? (q1Other.trim() || 'その他') : q1,
-        q2: '',
-        q3: q3 === 'その他' ? (q3Other.trim() || 'その他') : q3,
-        requestedStaff: staffAssignmentEnabled ? selStaff : '',
-        email: emailCollectionEnabled ? String(email).trim() : '',
-        language: lang,
-      })
+      if (recurringActive) {
+        const dates = buildRecurringDates(dateStr, recurringFrequency, recurringCount, customIntervalWeeks)
+        const r = await api.createRecurringReservation({ ...commonPayload, dates })
+        if (r.success) {
+          const failedDates = (r.results || []).filter(x => !x.success).map(x => x.date)
+          const summary = failedDates.length > 0
+            ? (lang === 'en'
+              ? `Confirmed: ${r.successCount} / Not confirmed: ${r.failCount} (${failedDates.join(', ')})\nWe'll contact you individually about the occurrence(s) that couldn't be confirmed.`
+              : `確定：${r.successCount}回／不成立：${r.failCount}回（${failedDates.join('、')}）\n不成立の回は個別にご連絡します。`)
+            : (lang === 'en' ? `All ${r.successCount} occurrences confirmed.` : `全${r.successCount}回、すべて確定しました。`)
+          setDone({ detail: baseDetail + '\n\n📅 ' + summary, id: '', pending: false, error: '', backScreen: 'confirm', title: doneTitle, pendingApproval: false })
+        } else {
+          setDone(prev => ({ ...prev, pending: false, error: r.error || t('予約に失敗しました') }))
+        }
+        setSubmitting(false)
+        return
+      }
+      const r = await api.createReservation({ ...commonPayload, date: dateStr })
       if (r.success) {
         const doneMsg = isKasshiki
           ? baseDetail + '\n\n' + t('内容を確認後、ご連絡いたします。')
@@ -1048,7 +1252,7 @@ export default function Home() {
     }
     setMyResLoading(true)
     try {
-      const r = await api.getMyReservations(profile?.userId || '')
+      const r = await api.getMyReservations(profile?.userId || '', undefined, undefined, idToken)
       if (r.success) setMyRes(r.list || [])
       else { setMyRes([]); setMyResErr(t('予約の読み込みに失敗しました。もう一度お試しください。')) }
     } catch {
@@ -1081,7 +1285,7 @@ export default function Home() {
     setCancelingId(id)
     setCancelErr('')
     try {
-      const r = await api.cancelReservation({ reservationId: id, lineUserId: profile?.userId || '', phone: myResPhoneUsed, name: myResNameUsed })
+      const r = await api.cancelReservation({ reservationId: id, lineUserId: profile?.userId || '', idToken, phone: myResPhoneUsed, name: myResNameUsed })
       if (r.success) {
         setMyRes((prev) => prev.map((x) => (x.id === id ? { ...x, status: 'キャンセル' } : x)))
         setCancelId(null)
@@ -1092,6 +1296,42 @@ export default function Home() {
       setCancelErr(t('通信エラーが発生しました。もう一度お試しいただき、失敗する場合はお電話にてご連絡ください。'))
     }
     setCancelingId(null)
+  }
+
+  // 見積/承認フロー：承諾・辞退のいずれも予約自体のステータスは変えない（バックエンドの
+  // respondToEstimate参照）。表示だけその場でestimateStatusを更新する。
+  async function respondEstimate(id, accept) {
+    setEstimateRespondingId(id)
+    setEstimateRespondErr('')
+    try {
+      const r = await api.respondToEstimate({ reservationId: id, lineUserId: profile?.userId || '', idToken, phone: myResPhoneUsed, name: myResNameUsed, accept })
+      if (r.success) {
+        setMyRes((prev) => prev.map((x) => (x.id === id ? { ...x, estimateStatus: accept ? '承諾済み' : '辞退済み' } : x)))
+      } else {
+        setEstimateRespondErr(r.error || t('操作に失敗しました。お手数ですがお電話にてご連絡ください。'))
+      }
+    } catch {
+      setEstimateRespondErr(t('通信エラーが発生しました。もう一度お試しください。'))
+    }
+    setEstimateRespondingId(null)
+  }
+
+  // 定期予約（シリーズ予約）のまとめてキャンセル。個々の回はcancelReservationがそのまま使える
+  // （各回は完全に独立した通常の予約のため）ので、このボタンはシリーズ全体をまとめたい時だけ使う。
+  async function cancelSeriesAll(seriesId) {
+    setSeriesCancelingId(seriesId)
+    setSeriesCancelErr('')
+    try {
+      const r = await api.cancelSeries({ seriesId, lineUserId: profile?.userId || '', idToken, phone: myResPhoneUsed, name: myResNameUsed })
+      if (r.success) {
+        setMyRes((prev) => prev.map((x) => (x.seriesId === seriesId && x.date >= toYMD(new Date()).replace(/-/g, '/') ? { ...x, status: 'キャンセル' } : x)))
+      } else {
+        setSeriesCancelErr(r.error || t('キャンセルに失敗しました。お手数ですがお電話にてご連絡ください。'))
+      }
+    } catch {
+      setSeriesCancelErr(t('通信エラーが発生しました。もう一度お試しいただき、失敗する場合はお電話にてご連絡ください。'))
+    }
+    setSeriesCancelingId(null)
   }
 
   // ===== 変更フォーム =====
@@ -1109,6 +1349,11 @@ export default function Home() {
     // 変更先の日付でも「✅登録しました」と誤表示される）。onDateChange（748行目）と同様にリセットする。
     setWlDone(false)
     setWlErr('')
+    setWlNotifyCondition('anyTime')
+    // privacyConsentは新規予約確認画面等と共有のstate。前の画面で入れたチェックが持ち越されると、
+    // 変更内容の確認画面で「一度も明示的に同意していないのにチェック済み」に見えてしまう
+    // （Apple CEO・ランダム客層の両視点が独立発見・ラウンド30での指摘）。
+    setPrivacyConsent(false)
     const now = new Date()
     setCalYear(now.getFullYear())
     setCalMonth(now.getMonth())
@@ -1124,6 +1369,7 @@ export default function Home() {
     setAvailErr('')
     setWlDone(false)
     setWlErr('')
+    setWlNotifyCondition('anyTime')
     if (d) {
       // 空席取得は祝日データに依存しないため、onDateChangeと同様に並行して開始する。
       fetchAvailability(d, undefined, changingRes?.course)
@@ -1131,12 +1377,20 @@ export default function Home() {
     }
   }
 
-  // 変更後の人数ボタン用：同日のまま人数だけ増やす場合は、自分自身の予約分の席を残席に加算して判定する
+  // 変更後の人数ボタン用：同じ枠のまま人数だけ増やす場合は、自分自身の予約分の席を残席に加算して判定する。
+  // 以前は「日付が同じか」しか見ておらず、timeSlot容量モデルで同じ日の別の時間帯へ変更しようとした
+  // 場合にも自分の元予約人数を加算してしまい、実際より多く空いているように見せてしまっていた
+  // （バックエンドのgetCalendarAvailabilityはexcludeCalIdで正しく除外判定するため最終的には
+  // エラーで弾かれるが、確認画面まで進めた直後に失敗する体験の悪さに直結する。審判団バックログ
+  // 一括レビューでの指摘）。dailyモデルは元々「その日1晩」を1つのプールとして数えるため、時間が
+  // 違っても同日なら自分の分を除外し続けるのが正しい。timeSlot/perStaffモデルは、時間まで一致する
+  // 場合だけ「同じ枠」として自分の分を除外する。
   function chgGuestDisabled(n) {
     if (availErr) return true
     if (!avail || availLoading) return false
-    const sameDay = changingRes && chgDate && chgDate.replace(/-/g, '/') === changingRes.date
-    const ownSeats = sameDay ? (parseInt(changingRes.guests) || 0) : 0
+    const sameDate = changingRes && chgDate && chgDate.replace(/-/g, '/') === changingRes.date
+    const sameSlot = sameDate && (capacityModel === 'daily' || chgTime === changingRes.time)
+    const ownSeats = sameSlot ? (parseInt(changingRes.guests) || 0) : 0
     if (n === 1) return !avail.canBook1
     if (capacityModel === 'perStaff') return n >= 2 && !avail.canBook2to5
     if (n >= 2) return n > (avail.remainingSeats + ownSeats)
@@ -1151,14 +1405,14 @@ export default function Home() {
     // submitReservation（941行目）と同じくfmtDateLang/t('名様')を使う。以前はfmtDate（日本語専用の
     // M月D日（曜）表記）と「名様」ハードコードのままで、変更完了直後の画面だけ英語モードでも
     // 日本語のまま表示されていた（ランダム客層視点レビューでの指摘）。
-    const baseDetail = `${fmtDateLang(chgDate, lang)}　${chgTime}〜${addMin(chgTime, chgStayMin)}\n${effectiveChgGuests}${t('名様')}`
+    const baseDetail = `${fmtDateLang(chgDate, lang)}　${chgTime}〜${addMin(chgTime, chgStayMin, lang)}\n${guestsWithUnit(effectiveChgGuests)}`
     // Optimistic UI：先に done 画面へ遷移し、API はバックグラウンドで送信
     setDone({ detail: baseDetail, id: '', pending: true, error: '', backScreen: 'chgconfirm', title: t('変更が完了しました') })
     setScreen('done')
     try {
       const r = await api.changeReservation({
         reservationId: changingRes.id,
-        lineUserId: profile?.userId || '',
+        lineUserId: profile?.userId || '', idToken,
         phone: myResPhoneUsed,
         name: myResNameUsed,
         newDate: nd,
@@ -1206,7 +1460,7 @@ export default function Home() {
             <へ変換して無害化する。 */}
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
           '@context': 'https://schema.org',
-          '@type': 'LocalBusiness',
+          '@type': BUSINESS_CATEGORY_SCHEMA_TYPES[businessCategory] || 'LocalBusiness',
           name: bizName,
           description: bizTagline || undefined,
           telephone: bizPhone || undefined,
@@ -1307,22 +1561,31 @@ export default function Home() {
           {/* コース（コース無しモードでは選択UI自体を表示しない） */}
           {!isSimpleMode && (
           <div className="card">
-            <div className="card-lbl">{itemIcon}　{itemLabel}</div>
-            <div className="card-body">
-              {visibleCourses.map((c, i) => (
+            <div className="card-lbl" id="course-group-lbl">{itemIcon}　{itemLabel}</div>
+            {/* コース選択がマウスクリックのみのdivで、キーボード操作・スクリーンリーダーでは選択肢の
+                存在自体が伝わらなかった（累積指摘の総棚卸しでの指摘）。role/tabIndex/キーボード操作を
+                追加し、見た目（レイアウト・スタイル）は変更しない。 */}
+            <div className="card-body" role="radiogroup" aria-labelledby="course-group-lbl">
+              {visibleCourses.map((c, i) => {
+                const selectCourse = () => {
+                  if (visibleCourses.length <= 1) return
+                  setSelCourse(i)
+                  // コースにより提供時間帯（ランチ/ディナー等）が変わるため、選択済みの時間はリセットする（人数はそのまま維持）
+                  setSelTime('')
+                  setInputErr('')
+                  // コースが変わると滞在時間・残席計算の前提が変わるため、別コースの古い残席情報を
+                  // 一瞬でも見せてしまわないようクリアする（時間を選び直すまで表示しない）
+                  setAvail(null)
+                  setAvailErr('')
+                }
+                return (
                 <div key={i}
                   className={`course-item${visibleCourses.length > 1 ? (selCourse === i ? ' sel' : '') : ''}`}
-                  onClick={() => {
-                    if (visibleCourses.length <= 1) return
-                    setSelCourse(i)
-                    // コースにより提供時間帯（ランチ/ディナー等）が変わるため、選択済みの時間はリセットする（人数はそのまま維持）
-                    setSelTime('')
-                    setInputErr('')
-                    // コースが変わると滞在時間・残席計算の前提が変わるため、別コースの古い残席情報を
-                    // 一瞬でも見せてしまわないようクリアする（時間を選び直すまで表示しない）
-                    setAvail(null)
-                    setAvailErr('')
-                  }}
+                  onClick={selectCourse}
+                  role={visibleCourses.length > 1 ? 'radio' : undefined}
+                  aria-checked={visibleCourses.length > 1 ? selCourse === i : undefined}
+                  tabIndex={visibleCourses.length > 1 ? 0 : undefined}
+                  onKeyDown={visibleCourses.length > 1 ? (e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectCourse() } }) : undefined}
                   style={visibleCourses.length > 1 ? { cursor:'pointer', border: selCourse===i ? '2px solid var(--green)' : '2px solid var(--border)', borderRadius:10, padding:'10px 12px', marginBottom: i < visibleCourses.length-1 ? 8 : 0 } : {}}>
                   <div style={{ display: 'flex', gap: 10 }}>
                     {c.imageUrl && (
@@ -1342,14 +1605,14 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           </div>
           )}
 
           {/* 来店日 */}
           <div className="card" id="card-date">
-            <div className="card-lbl">{t('📅　ご来店日')}</div>
+            <div className="card-lbl">{visitText('📅　ご来店日')}</div>
             <div className="card-body" style={{ position: 'relative' }}>
               {monthAvailLoading && (
                 <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1, minHeight:180 }}>
@@ -1375,7 +1638,7 @@ export default function Home() {
           {showTimeCard && (
             <div className="card" id="card-time">
               <div className="card-lbl">
-                {t('⏰　来店時間')}
+                {visitText('⏰　来店時間')}
                 {!selTime && availLoading && <span className="avail-loading"> {t('確認中...')}</span>}
               </div>
               <div className="card-body">
@@ -1421,7 +1684,7 @@ export default function Home() {
                   <div style={{ background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 12px', marginBottom:10, fontSize:13, color:'var(--red)' }}>
                     {availErr}
                     <button onClick={() => fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, staffAssignmentEnabled ? selStaff : undefined)}
-                      style={{ marginLeft:8, background:'var(--white)', border:'1px solid var(--red)', color:'var(--red)', borderRadius:6, padding:'3px 10px', fontSize:12, cursor:'pointer' }}>
+                      style={{ marginLeft:8, background:'var(--white)', border:'1px solid var(--red)', color:'var(--red)', borderRadius:6, padding:'12px 16px', minHeight:44, minWidth:44, fontSize:13, fontWeight:'bold', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center' }}>
                       {t('再試行')}
                     </button>
                   </div>
@@ -1435,6 +1698,7 @@ export default function Home() {
                         key={n}
                         className={`g-btn${selGuest === String(n) && !isKasshiki ? ' sel' : ''}${disabled ? ' dis' : ''}`}
                         disabled={disabled}
+                        aria-pressed={selGuest === String(n) && !isKasshiki}
                         onClick={() => {
                           if (disabled) return
                           setSelGuest(String(n))
@@ -1444,7 +1708,15 @@ export default function Home() {
                           setInputErr('')
                         }}
                       >
-                        <span className="g-btn-main">{lang === 'en' ? `${n} guest${n === 1 ? '' : 's'}` : `${n}名`}</span>
+                        {/* 単位が「名」固定でcountUnit設定（台・件等）を反映していなかった（残席表示・
+                            単価表示は既にcountUnitを使っているのに、この人数選択ボタンだけ取り残されて
+                            いた）。英語表記は、店舗が単位をカスタマイズしていない大多数の店舗ではこれまで
+                            通り自然な"guest(s)"のまま、カスタマイズされている場合は他の箇所（1013・1474行目
+                            付近）と同じくcountUnitの値をそのまま添える形にする（審判団バックログ一括
+                            レビューでの指摘）。 */}
+                        <span className="g-btn-main">{lang === 'en'
+                          ? (countUnit === '名' ? `${n} guest${n === 1 ? '' : 's'}` : `${n} ${countUnit}`)
+                          : `${n}${countUnit}`}</span>
                         {isOccupied && <span className="g-btn-sub">{n === 1 ? t('条件あり') : t('満席')}</span>}
                       </button>
                     )
@@ -1460,11 +1732,27 @@ export default function Home() {
                       <>
                         <div style={{ marginBottom:8 }}>{t('この日は満席です。キャンセルが出た際にお知らせすることができます（先着順のためご案内をお約束するものではありません）。')}</div>
                         <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
-                          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')}
+                          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')} aria-label={t('お名前')}
                             style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--input-bg)', color:'var(--text)' }} />
-                          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')}
+                          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')} aria-label={t('電話番号')}
                             style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--input-bg)', color:'var(--text)' }} />
                         </div>
+                        {/* 時間帯・担当者制の業態でだけ表示する。'daily'業態（日付単位で元々正しい判定）では
+                            この選択自体が無意味なので出さない（業種経営者陣視点レビュー・ラウンド30での
+                            指摘、ユーザー承認済み：「通知内容・条件をお客様に選ばせる」）。 */}
+                        {capacityModel !== 'daily' && (
+                          <div style={{ marginBottom:8, fontSize:12, color:'var(--sub)' }}>
+                            <div style={{ marginBottom:4 }}>{t('どのように通知しますか？')}</div>
+                            <label style={{ display:'flex', alignItems:'center', gap:6, marginBottom:2, cursor:'pointer' }}>
+                              <input type="radio" checked={wlNotifyCondition === 'strict'} onChange={() => setWlNotifyCondition('strict')} />
+                              <span>{t('ちょうどこの時間・担当者が空いたときだけ通知する')}</span>
+                            </label>
+                            <label style={{ display:'flex', alignItems:'center', gap:6, cursor:'pointer' }}>
+                              <input type="radio" checked={wlNotifyCondition === 'anyTime'} onChange={() => setWlNotifyCondition('anyTime')} />
+                              <span>{t('同じ日ならいつでも良いので、空きが出たら通知する')}</span>
+                            </label>
+                          </div>
+                        )}
                         {wlErr && <div style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         {/* キャンセル待ち登録も氏名・電話番号を収集するため、予約確定と同じ同意チェックを
                             必須にする（Apple CEO視点レビューでの指摘：確認画面を経由しないこの経路だけ
@@ -1544,9 +1832,9 @@ export default function Home() {
                         </div>
                         {featureFlags.waitlistEnabled && (
                           <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
-                            <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')}
+                            <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')} aria-label={t('お名前')}
                               style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--white)', color:'var(--text)' }} />
-                            <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')}
+                            <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')} aria-label={t('電話番号')}
                               style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--white)', color:'var(--text)' }} />
                           </div>
                         )}
@@ -1581,13 +1869,20 @@ export default function Home() {
                   <div className="k-warning">
                     {!selGuest && <p className="k-warning-title">{t('人数未選択です。')}</p>}
                     {(() => {
-                      const kPrice = Number(visibleCourses[selCourse]?.price) || 11000
+                      // ||演算子だとpriceが意図的に0円（無料相談枠等、他業態展開時に実在しうる）の場合も
+                      // 貝屋和光の実コース価格(11000)にフォールバックしてしまい、他業態で虚偽の金額を
+                      // 表示する実害があった（Google/イーロン各視点が独立発見・審判団バックログ一括
+                      // レビュー・ラウンド31での指摘）。Number.isFiniteで「未設定」と「明示的に0」を区別する。
+                      const kPriceRaw = Number(visibleCourses[selCourse]?.price)
+                      const kPrice = Number.isFinite(kPriceRaw) ? kPriceRaw : 11000
                       const kGuests = Math.max(6, parseInt(selGuest) || 0)
                       const kTotal = (kPrice * kGuests).toLocaleString()
+                      // 貸切最低保証の対象人数（単位）が「名」固定で、店舗設定のcountUnit（台・件等）を
+                      // 反映していなかった（累積指摘の総棚卸しでの指摘）。他の箇所と同じguestsWithUnit方式に統一する。
                       return lang === 'en' ? (
-                        <p className="k-warning-body">Private-hire bookings require a <strong>minimum guaranteed spend for {kGuests} guests (¥{kTotal})</strong>.<br />Please only book if you agree to this.</p>
+                        <p className="k-warning-body">Private-hire bookings require a <strong>minimum guaranteed spend for {guestsWithUnit(kGuests)} (¥{kTotal})</strong>.<br />Please only book if you agree to this.</p>
                       ) : (
-                        <p className="k-warning-body">貸切プランのご利用には<strong>最低売上保証として{kGuests}名様分（¥{kTotal}）</strong>が発生いたします。<br />ご承知頂ける方のみご予約をお願いいたします。</p>
+                        <p className="k-warning-body">貸切プランのご利用には<strong>最低売上保証として{guestsWithUnit(kGuests)}分（¥{kTotal}）</strong>が発生いたします。<br />ご承知頂ける方のみご予約をお願いいたします。</p>
                       )
                     })()}
                     <div className="k-warning-btns">
@@ -1604,7 +1899,11 @@ export default function Home() {
                 {isKasshiki && (
                   <div className="k-panel">
                     <p className="k-note">{t('内容を確認後、ご連絡いたします。')}</p>
-                    {selGuest && selGuest !== 'konsult' && <p className="k-note" style={{ marginTop:4 }}>{lang === 'en' ? `Selected party size: ${selGuest}` : `選択人数：${selGuest}名`}</p>}
+                    {/* 同じ貸切パネル内、直後の最低保証額表示はguestsWithUnit()でcountUnit（台・件等）に対応
+                        済みなのに、ここだけ「名」固定・英語版は単位自体が欠落していた取り残し
+                        （ランダム客層視点レビュー・ラウンド36での指摘）。guestsWithUnit自体が言語分岐を
+                        持つため、ここでは呼ぶだけでよい。 */}
+                    {selGuest && selGuest !== 'konsult' && <p className="k-note" style={{ marginTop:4 }}>{(lang === 'en' ? 'Selected party size: ' : '選択人数：') + guestsWithUnit(selGuest)}</p>}
                     {selGuest === 'konsult' && <p className="k-note" style={{ marginTop:4 }}>{t('13名以上・人数未定（ご相談）')}</p>}
                     <button className="myres-link" style={{ marginTop:10, fontSize:13 }} onClick={() => {
                       setIsKasshiki(false)
@@ -1622,16 +1921,16 @@ export default function Home() {
           <div className="card" id="card-contact">
             <div className="card-lbl">{t('📝　ご連絡先')}</div>
             <div className="card-body">
-              <input type="text" value={name}
+              <input type="text" value={name} aria-label={t('お名前')}
                 onChange={(e) => { setName(e.target.value); setInputErr('') }}
                 placeholder={t('お名前（例：山田 太郎）')} />
-              <input type="tel" value={phone}
+              <input type="tel" value={phone} aria-label={t('電話番号')}
                 onChange={(e) => { setPhone(e.target.value); setInputErr('') }}
                 placeholder={t('電話番号（例：090-0000-0000）')}
                 style={{ marginTop: 10 }} />
               {emailCollectionEnabled && (
                 <>
-                  <input type="email" value={email}
+                  <input type="email" value={email} aria-label={t('メールアドレス')}
                     onChange={(e) => { setEmail(e.target.value); setInputErr('') }}
                     placeholder={isGuestMode ? t('メールアドレス（確認メールをお送りします）') : t('メールアドレス（任意）')}
                     style={{ marginTop: 10 }} />
@@ -1641,32 +1940,36 @@ export default function Home() {
             </div>
           </div>
 
-          {/* その他の情報（任意）：予約の必須項目ではないため、既定では折りたたんでおく */}
+          {/* その他の情報（任意）：現在はshowOptionalの初期値がtrueのため実質到達不能（dead code）だが、
+              将来また折りたたみ表示に戻す改修が入った場合に備え、ボタン文言を実際のQ1見出し
+              （q1Question、業態ごとにカスタマイズ可能）に連動させておく。以前は「ご利用目的」という
+              飲食店向けの固定日本語のままで、展開後に表示される実際の見出し（例：整備工場なら
+              「ご依頼内容」）と食い違っていた（Apple CEO視点レビュー・ラウンド29での指摘）。 */}
           {!showOptional ? (
             <button type="button" className="optional-toggle" onClick={() => setShowOptional(true)}>
               {(staffAssignmentEnabled && staffRoster.length > 0)
-                ? t(`＋ ご指名・ご利用目的・ご要望等を追加する（任意）`)
-                : t('＋ ご利用目的・ご要望等を追加する（任意）')}
+                ? `＋ ${t('ご指名')}・${(q1Question || t('ご利用目的')).replace(/（任意）$/, '')}・${t('ご要望等を追加する（任意）')}`
+                : `＋ ${(q1Question || t('ご利用目的')).replace(/（任意）$/, '')}・${t('ご要望等を追加する（任意）')}`}
             </button>
           ) : (
             <>
-              {/* Q1・Q2：見出し・プレースホルダー自体は店舗の自由入力ではない固定UI文言のため翻訳対象。
-                  選択肢（q1Options/q3Options）は店舗ごとの自由入力コンテンツのため、引き続き翻訳対象外
-                  （ランダム客層視点レビューでの指摘：この「その他の情報（任意）」セクション全体の固定見出し・
-                  プレースホルダーがt()経由になっておらず、英語モードでも常に日本語のまま表示されていた）。 */}
+              {/* Q1・Q2の見出し文言（q1Question/q3Question）も、選択肢（q1Options/q3Options）と同じく
+                  店舗側の自由入力コンテンツになったため、翻訳対象外（t()を通さない）に統一した
+                  （2026-08-08、質問文言自体を管理画面から変更できるようにした変更に伴う）。
+                  プレースホルダー等の固定UI文言は引き続きt()経由で翻訳する。 */}
               {/* Q1 */}
               <div className="card">
-                <div className="card-lbl card-lbl-optional">{t('Q1. ご利用目的（任意）')}</div>
+                <div className="card-lbl card-lbl-optional">{`Q1. ${q1Question}`}</div>
                 <div className="card-body">
                   <div className="q-btn-row">
                     {q1Options.map(opt => (
-                      <button key={opt} className={`q-btn${q1 === opt ? ' sel' : ''}`}
+                      <button key={opt} className={`q-btn${q1 === opt ? ' sel' : ''}`} aria-pressed={q1 === opt}
                         onClick={() => { setQ1(q1 === opt ? '' : opt); setQ1Other('') }}>
                         {opt}
                       </button>
                     ))}
                   </div>
-                  {q1 === 'その他' && (
+                  {isQ1Other(q1) && (
                     <textarea rows={2} value={q1Other} onChange={e => setQ1Other(e.target.value)}
                       placeholder={t('具体的にご記入ください')} style={{ marginTop:10 }} />
                   )}
@@ -1675,17 +1978,17 @@ export default function Home() {
 
               {/* Q2 */}
               <div className="card">
-                <div className="card-lbl card-lbl-optional">{t('Q2. どのように当店を知りましたか（任意）')}</div>
+                <div className="card-lbl card-lbl-optional">{`Q2. ${q3Question}`}</div>
                 <div className="card-body">
                   <div className="q-btn-row">
                     {q3Options.map(opt => (
-                      <button key={opt} className={`q-btn${q3 === opt ? ' sel' : ''}`}
+                      <button key={opt} className={`q-btn${q3 === opt ? ' sel' : ''}`} aria-pressed={q3 === opt}
                         onClick={() => { setQ3(q3 === opt ? '' : opt); setQ3Other('') }}>
                         {opt}
                       </button>
                     ))}
                   </div>
-                  {q3 === 'その他' && (
+                  {isQ3Other(q3) && (
                     <textarea rows={2} value={q3Other} onChange={e => setQ3Other(e.target.value)}
                       placeholder={t('具体的にご記入ください')} style={{ marginTop:10 }} />
                   )}
@@ -1698,11 +2001,11 @@ export default function Home() {
                   <div className="card-lbl card-lbl-optional">{t('🔖 ご指名（任意）')}</div>
                   <div className="card-body">
                     <div className="q-btn-row" style={{ opacity: availLoading ? 0.6 : 1 }}>
-                      <button disabled={availLoading} className={`q-btn${selStaff === '' ? ' sel' : ''}`} onClick={() => { setSelStaff(''); if (selDate && selTime) fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, undefined) }}>
+                      <button disabled={availLoading} className={`q-btn${selStaff === '' ? ' sel' : ''}`} aria-pressed={selStaff === ''} onClick={() => { setSelStaff(''); if (selDate && selTime) fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, undefined) }}>
                         {t('指名なし')}
                       </button>
                       {staffRoster.map(s => (
-                        <button key={s.name} disabled={availLoading} className={`q-btn${selStaff === s.name ? ' sel' : ''}`} onClick={() => {
+                        <button key={s.name} disabled={availLoading} className={`q-btn${selStaff === s.name ? ' sel' : ''}`} aria-pressed={selStaff === s.name} onClick={() => {
                           const next = selStaff === s.name ? '' : s.name
                           setSelStaff(next)
                           if (selDate && selTime) fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, next || undefined)
@@ -1726,8 +2029,12 @@ export default function Home() {
                       <div key={i} style={{ display: 'flex', gap: 8, marginBottom: i < companionCount() - 1 ? 8 : 0 }}>
                         <input type="text" value={c.name} onChange={(e) => updateCompanion(i, 'name', e.target.value)}
                           placeholder={lang === 'en' ? `Guest ${i + 1} name (optional)` : `${i + 1}人目のお名前（任意）`} style={{ flex: '1 1 40%' }} />
+                        {/* 以前はプレースホルダーの例示が「アレルギー等」固定で飲食店以外の業態には
+                            馴染まなかった（同伴者情報自体は他業態でも使う汎用機能のため、カードラベル
+                            側は既に業態を問わない文言になっていたのに、この入力欄だけ飲食店の例示が
+                            残っていた）。業態を問わない一般的な文言にする。 */}
                         <input type="text" value={c.allergy} onChange={(e) => updateCompanion(i, 'allergy', e.target.value)}
-                          placeholder={t('ご要望（アレルギー等、任意）')} style={{ flex: '1 1 60%' }} />
+                          placeholder={lang === 'en' ? `Requests (optional)` : `ご要望（任意）`} style={{ flex: '1 1 60%' }} />
                       </div>
                     ))}
                     <p className="hint" style={{ marginTop: 8 }}>{t('1人目はご予約の代表者様です。お名前を書かなくても「1人目」として記録されます。')}</p>
@@ -1768,7 +2075,8 @@ export default function Home() {
                   {visibleCourses[selCourse]?.name || itemLabel}
                   <br />
                   <span style={{ fontSize: 12, fontWeight: 'normal', color: 'var(--sub)' }}>
-                    ¥{Number(visibleCourses[selCourse]?.price || 11000).toLocaleString()}
+                    {/* ||だとprice=0（無料相談枠等）でも貝屋和光の実価格にフォールバックしてしまう同種のバグ */}
+                    ¥{(() => { const p = Number(visibleCourses[selCourse]?.price); return Number.isFinite(p) ? p : 11000 })().toLocaleString()}
                     {lang === 'en'
                       ? ` (tax incl.) / ${countUnit === '台' ? 'per unit' : 'per person'}　・　${fmtDuration(visibleCourses[selCourse]?.duration, lang)}`
                       : `（税込）/ ${countUnit === '台' ? `1${countUnit}` : 'お一人様'}　・　${fmtDuration(visibleCourses[selCourse]?.duration, lang)}`}
@@ -1777,16 +2085,16 @@ export default function Home() {
               </div>
             )}
             <div className="cf-row">
-              <div className="cf-lbl">{t('ご来店日')}</div>
+              <div className="cf-lbl">{visitText('ご来店日')}</div>
               <div className="cf-val">{fmtDateLang(selDate, lang)}</div>
             </div>
             <div className="cf-row">
               <div className="cf-lbl">{t('時間')}</div>
-              <div className="cf-val">{selTime}〜{addMin(selTime, selStayMin)}（{t('目安')}）</div>
+              <div className="cf-val">{selTime}〜{addMin(selTime, selStayMin, lang)}（{t('目安')}）</div>
             </div>
             <div className="cf-row">
               <div className="cf-lbl">{t('人数')}</div>
-              <div className="cf-val">{selGuest === 'konsult' ? t('13名以上・人数未定（ご相談）') : effectiveGuests ? `${effectiveGuests}${t('名様')}` : t('人数未定')}</div>
+              <div className="cf-val">{selGuest === 'konsult' ? t('13名以上・人数未定（ご相談）') : effectiveGuests ? guestsWithUnit(effectiveGuests) : t('人数未定')}</div>
             </div>
             {isKasshiki && (
               <div className="cf-row">
@@ -1806,14 +2114,14 @@ export default function Home() {
             </div>
             {q1.trim() && (
               <div className="cf-row">
-                <div className="cf-lbl">Q1</div>
-                <div className="cf-val">{q1 === 'その他' ? (q1Other.trim() || 'その他') : q1.trim()}</div>
+                <div className="cf-lbl">{(q1Question || 'ご利用目的').replace(/（任意）$/, '')}</div>
+                <div className="cf-val">{isQ1Other(q1) ? (q1Other.trim() || q1) : q1.trim()}</div>
               </div>
             )}
             {q3.trim() && (
               <div className="cf-row">
-                <div className="cf-lbl">Q2</div>
-                <div className="cf-val">{q3 === 'その他' ? (q3Other.trim() || 'その他') : q3.trim()}</div>
+                <div className="cf-lbl">{(q3Question || 'どのように当店を知りましたか').replace(/（任意）$/, '')}</div>
+                <div className="cf-val">{isQ3Other(q3) ? (q3Other.trim() || q3) : q3.trim()}</div>
               </div>
             )}
             {staffAssignmentEnabled && selStaff && (
@@ -1829,6 +2137,52 @@ export default function Home() {
               </div>
             )}
           </div>
+          {/* 定期予約（シリーズ予約）：貸切・大人数相談では選べない（上記state宣言のコメント参照）。
+              使わない店舗にも常に見えていた（Apple CEO・Appleデザインチーム視点レビュー・2026-08-11の
+              指摘）ため、waitlist等と同じくFEATURE_SETTINGSで丸ごと隠せるようにする。 */}
+          {!isKasshiki && !isKonsult && featureFlags.recurringBookingEnabled && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
+                <input type="checkbox" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
+                {t('📅 定期予約として申し込む')}
+              </label>
+              {isRecurring && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    {[['weekly', t('毎週')], ['biweekly', t('隔週')], ['monthly', t('毎月')], ['custom', t('カスタム')]].map(([v, l]) => (
+                      <button key={v} className={`q-btn${recurringFrequency === v ? ' sel' : ''}`} onClick={() => setRecurringFrequency(v)} type="button">{l}</button>
+                    ))}
+                  </div>
+                  {/* カスタム間隔（美容院の6〜8週間隔等、毎週/隔週/毎月の3択に収まらない利用パターンが
+                      業種経営者陣視点レビュー・2026-08-11で指摘された）。 */}
+                  {recurringFrequency === 'custom' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 8 }}>
+                      <span>{t('間隔')}：</span>
+                      <select value={customIntervalWeeks} onChange={e => setCustomIntervalWeeks(parseInt(e.target.value, 10))} style={{ padding: '6px 10px' }}>
+                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <option key={n} value={n}>{n}{t('週間ごと')}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                    <span>{t('回数')}：</span>
+                    <select value={recurringCount} onChange={e => setRecurringCount(parseInt(e.target.value, 10))} style={{ padding: '6px 10px' }}>
+                      {[2, 3, 4, 5, 6, 7, 8].map(n => <option key={n} value={n}>{n}{t('回')}</option>)}
+                    </select>
+                  </div>
+                  {/* 頻度・回数を選んでも、実際に申し込まれる日付が確認画面のどこにも表示されず、
+                      送信するまで具体的な日にちが分からなかった（ランダム客層・イーロン両視点レビュー・
+                      ラウンド35の指摘：特に「毎月」は月によって日付がズレる問題と合わせて、事前に
+                      確認できないと送信後に初めて意図と違う日程だったと気づくことになる）。 */}
+                  <div style={{ fontSize: 12, color: 'var(--sub)', marginTop: 8, lineHeight: 1.7 }}>
+                    {t('申し込まれる日程')}：{buildRecurringDates(selDate, recurringFrequency, recurringCount, customIntervalWeeks).map(d => fmtDateLang(d, lang)).join(lang === 'en' ? ', ' : '、')}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--hint)', marginTop: 6 }}>
+                    {t('選択した来店日を1回目として、以降を自動で申し込みます。満席等で確定できない回があった場合は、その回だけ個別にご連絡します。')}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {bookingNotes ? (
             <div className="policy" style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={() => setShowNotesPopup(true)}>
               <span style={{ fontSize:16 }}>⚠️</span>
@@ -1913,7 +2267,7 @@ export default function Home() {
                   <button className="btn-p" onClick={() => {
                     setSelDate(''); setSelTime(''); setSelGuest(''); setSelCourse(0)
                     setIsKasshiki(false); setIsKonsult(false); setShowKasshikiWarning(false)
-                    setQ1(''); setQ1Other(''); setQ3(''); setQ3Other(''); setNotes(''); setShowOptional(false)
+                    setQ1(''); setQ1Other(''); setQ3(''); setQ3Other(''); setNotes(''); setShowOptional(true)
                     setAvail(null); setAvailErr(''); setInputErr('')
                     // selGuestは''にリセットしていたが、同伴者情報（companions）は人数変更時のuseEffectが
                     // 配列を「切り詰める」だけで内容をクリアしないため、ここで明示的にリセットしないと
@@ -1940,11 +2294,11 @@ export default function Home() {
               <div className="card-lbl">{t('📞　電話番号でご予約を確認')}</div>
               <div className="card-body">
                 <p className="hint" style={{ marginBottom: 10 }}>{t('LINEをご利用でないため、ご予約時にご登録いただいたお名前・電話番号でご予約を検索します。')}</p>
-                <input type="text" value={myResNameInput}
+                <input type="text" value={myResNameInput} aria-label={t('お名前')}
                   onChange={(e) => { setMyResNameInput(e.target.value); setMyResErr('') }}
                   placeholder={t('お名前（例：山田 太郎）')}
                   style={{ marginBottom: 10 }} />
-                <input type="tel" value={myResPhoneInput}
+                <input type="tel" value={myResPhoneInput} aria-label={t('電話番号')}
                   onChange={(e) => { setMyResPhoneInput(e.target.value); setMyResErr('') }}
                   placeholder={t('電話番号（例：090-0000-0000）')} />
                 {myResErr && <div className="err" style={{ marginTop: 10 }}>{myResErr}</div>}
@@ -1985,6 +2339,97 @@ export default function Home() {
                     ⏳ {t('まだ確定していません（貸切・大人数のご相談中）')}
                   </div>
                 )}
+                {/* 定期予約（シリーズ予約）：同じseriesIdを持つ予約が2件以上ある場合のみ表示。
+                    「まとめてキャンセル」ボタンは、そのシリーズの最初の表示回にのみ1つだけ出す
+                    （myResは日付順のため、同じseriesIdの最初の出現＝リスト内で一番早い回）。 */}
+                {res.seriesId && myRes.filter(x => x.seriesId === res.seriesId).length > 1 && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--sub)' }}>
+                    🔁 {t('定期予約')}
+                    {myRes.findIndex(x => x.seriesId === res.seriesId) === myRes.indexOf(res) && res.status !== 'キャンセル' && (
+                      <button className="btn-s" style={{ marginLeft: 8, padding: '4px 10px', fontSize: 12 }}
+                        disabled={seriesCancelingId === res.seriesId} onClick={() => { setSeriesCancelConfirmId(res.seriesId); setSeriesCancelErr('') }}>
+                        {seriesCancelingId === res.seriesId ? t('処理中...') : t('このシリーズをまとめてキャンセル')}
+                      </button>
+                    )}
+                    {seriesCancelConfirmId === res.seriesId && (
+                      <div className="cnl-confirm" style={{ marginTop: 6 }}>
+                        <p className="cnl-msg">{t('このシリーズの今後の予約をすべてキャンセルします。よろしいですか？')}</p>
+                        <div className="cnl-btns">
+                          <button className="cnl-yes" disabled={seriesCancelingId === res.seriesId}
+                            onClick={() => { setSeriesCancelConfirmId(null); cancelSeriesAll(res.seriesId) }}>
+                            {seriesCancelingId === res.seriesId ? t('処理中...') : t('はい')}
+                          </button>
+                          <button className="cnl-no" disabled={!!seriesCancelingId} onClick={() => setSeriesCancelConfirmId(null)}>{t('いいえ')}</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {seriesCancelErr && <div className="err" style={{ marginTop: 4 }}>{seriesCancelErr}</div>}
+                {/* 見積/承認フロー：予約自体のステータスとは独立（辞退しても予約自体は残る）。
+                    「提示済み」の間だけ承諾・辞退の操作を出す。 */}
+                {res.estimateStatus === '提示済み' && (
+                  <div style={{ marginTop: 8, background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 4 }}>💰 {t('お見積り')}：¥{(parseFloat(res.estimateAmount) || 0).toLocaleString()}</div>
+                    {/* 部品代・工賃の内訳（車修理工場向け、業種経営者陣視点レビュー・2026-08-13の指摘で新設）。
+                        両方揃っている時だけ表示する（片方だけでは内訳として意味をなさないため）。 */}
+                    {res.estimatePartsAmount && res.estimateLaborAmount && (
+                      <div style={{ fontSize: 12, color: 'var(--sub)', marginBottom: 4 }}>
+                        {t('部品代')}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{t('工賃')}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
+                      </div>
+                    )}
+                    {res.estimateNote && <div style={{ fontSize: 13, color: 'var(--sub)', marginBottom: 8 }}>{res.estimateNote}</div>}
+                    {/* 辞退＝予約自体のキャンセルだと誤解されるリスクがテスト全部隊レビュー・2026-08-11で
+                        複数視点から指摘された。承諾・辞退どちらでも予約自体は変わらない旨を明記する。 */}
+                    <div style={{ fontSize: 11, color: 'var(--hint)', marginBottom: 8 }}>{t('※ 承諾・辞退いずれの場合も、ご来店予約自体はキャンセルになりません。')}</div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn-p" style={{ padding: '9px 14px', fontSize: 13 }} disabled={estimateRespondingId === res.id} onClick={() => setEstimateConfirm({ id: res.id, accept: true })}>
+                        {estimateRespondingId === res.id ? t('送信中...') : t('承諾する')}
+                      </button>
+                      <button className="btn-s" style={{ padding: '9px 14px', fontSize: 13 }} disabled={estimateRespondingId === res.id} onClick={() => setEstimateConfirm({ id: res.id, accept: false })}>
+                        {t('辞退する')}
+                      </button>
+                    </div>
+                    {estimateConfirm?.id === res.id && (
+                      <div className="cnl-confirm" style={{ marginTop: 8 }}>
+                        <p className="cnl-msg">{estimateConfirm.accept ? t('この見積を承諾します。よろしいですか？') : t('この見積を辞退します。よろしいですか？（ご来店予約自体は継続します）')}</p>
+                        <div className="cnl-btns">
+                          <button className="cnl-yes" disabled={estimateRespondingId === res.id}
+                            onClick={() => { const c = estimateConfirm; setEstimateConfirm(null); respondEstimate(c.id, c.accept) }}>
+                            {estimateRespondingId === res.id ? t('送信中...') : t('はい')}
+                          </button>
+                          <button className="cnl-no" disabled={!!estimateRespondingId} onClick={() => setEstimateConfirm(null)}>{t('いいえ')}</button>
+                        </div>
+                      </div>
+                    )}
+                    {estimateRespondErr && <div className="err" style={{ marginTop: 6 }}>{estimateRespondErr}</div>}
+                  </div>
+                )}
+                {(res.estimateStatus === '承諾済み' || res.estimateStatus === '辞退済み') && (
+                  <div style={{ marginTop: 8, fontSize: 13, color: 'var(--sub)' }}>
+                    💰 {t('お見積り')}：¥{(parseFloat(res.estimateAmount) || 0).toLocaleString()}　{res.estimateStatus === '承諾済み' ? `✅ ${t('承諾済み')}` : `— ${t('辞退済み')}`}
+                  </div>
+                )}
+                {/* 承諾済みの見積の作業が完了した状態（業種経営者陣視点レビュー・2026-08-13で新設）。
+                    他のステータスより目立たせる（引き取りに来ていただく必要がある実際の行動を要するため）。
+                    以前は緑枠を使っていたが、このサイトで緑は「選択中・実行可能」を示す色として
+                    多用されているため、受動的な状態通知と誤読されうる（Apple CEO・Appleデザイン
+                    チーム両視点レビュー・2026-08-13の指摘）。他の色と衝突しない青系（--info-*）に変更。
+                    また承諾していた見積金額がこの状態になると画面から消えてしまっていた（Meta CEO視点
+                    レビューでの指摘）ため、金額もここに残す。 */}
+                {res.estimateStatus === '完了' && (
+                  <div style={{ marginTop: 8, background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: 8, padding: 10, fontSize: 13, fontWeight: 'bold', color: 'var(--info-text)' }}>
+                    {/* estimateWorkDoneMessageはサーバー側（getMyReservations）で配信設定のカスタム文言を
+                        解決済みで返してくる。店舗が既定文言のままなら翻訳辞書のt()で多言語対応し、
+                        カスタマイズ済みならそのまま表示する（店舗が自由に書いた文章を翻訳する手段は無いため。
+                        PMO視点レビュー・審判団ラウンド34での指摘：以前はLINE/メール通知だけがカスタム文言に
+                        対応し、この画面だけ常にハードコードの既定文言が出ていた）。 */}
+                    🔧 {res.estimateWorkDoneMessage === 'ご依頼の作業が完了しました。ご都合の良い時にお引き取りにお越しください。'
+                      ? t(res.estimateWorkDoneMessage)
+                      : (res.estimateWorkDoneMessage || t('ご依頼の作業が完了しました。ご都合の良い時にお引き取りにお越しください。'))}
+                    <div style={{ fontWeight: 'normal', marginTop: 4 }}>💰 {t('お見積り')}：¥{(parseFloat(res.estimateAmount) || 0).toLocaleString()}</div>
+                  </div>
+                )}
                 {res.status === 'キャンセル' ? (
                   <div style={{ marginTop: 8, color: 'var(--red)', fontSize: 13, fontWeight: 'bold' }}>{t('✕ キャンセル済み')}</div>
                 ) : !isChangeCancelable(res.date) ? (
@@ -2000,7 +2445,7 @@ export default function Home() {
                           <button className={`q-btn${lateReqType === 'cancel' ? ' sel' : ''}`} onClick={() => setLateReqType('cancel')}>{t('キャンセルしたい')}</button>
                         </div>
                         <textarea rows={2} value={lateReqMsg} onChange={e => setLateReqMsg(e.target.value)}
-                          placeholder={t('ご希望の内容（例：来店時間を19時に変更したい）')} />
+                          placeholder={visitText('ご希望の内容（例：来店時間を19時に変更したい）')} />
                         {lateReqErr && <div className="err" style={{ marginTop: 6 }}>{lateReqErr}</div>}
                         {/* この依頼文（自由記述）も新たに収集する個人情報のため、予約確定と同じ同意チェックを
                             必須にする（Apple CEO視点レビューでの指摘） */}
@@ -2081,7 +2526,7 @@ export default function Home() {
           </div>
           {chgErr && <div className="err mt12">{chgErr}</div>}
           <div className="card" id="card-chg-date">
-            <div className="card-lbl">{t('📅　新しいご来店日')}</div>
+            <div className="card-lbl">{visitText('📅　新しいご来店日')}</div>
             <div className="card-body">
               <CustomerCalendar
                 year={calYear} month={calMonth}
@@ -2098,7 +2543,7 @@ export default function Home() {
           </div>
           {chgDate && (
             <div className="card" id="card-chg-time">
-              <div className="card-lbl">{t('⏰　新しい来店時間')}</div>
+              <div className="card-lbl">{visitText('⏰　新しい来店時間')}</div>
               <div className="card-body" style={{ position: 'relative' }}>
                 {availLoading && (
                   <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1 }}>
@@ -2142,7 +2587,15 @@ export default function Home() {
                         className={`g-btn${chgGuests === String(n) ? ' sel' : ''}${disabled ? ' dis' : ''}`}
                         disabled={disabled}
                         onClick={() => { if (!disabled) { setChgGuests(String(n)); setChgErr('') } }}>
-                        <span className="g-btn-main">{lang === 'en' ? `${n} guest${n === 1 ? '' : 's'}` : `${n}名`}</span>
+                        {/* 単位が「名」固定でcountUnit設定（台・件等）を反映していなかった（残席表示・
+                            単価表示は既にcountUnitを使っているのに、この人数選択ボタンだけ取り残されて
+                            いた）。英語表記は、店舗が単位をカスタマイズしていない大多数の店舗ではこれまで
+                            通り自然な"guest(s)"のまま、カスタマイズされている場合は他の箇所（1013・1474行目
+                            付近）と同じくcountUnitの値をそのまま添える形にする（審判団バックログ一括
+                            レビューでの指摘）。 */}
+                        <span className="g-btn-main">{lang === 'en'
+                          ? (countUnit === '名' ? `${n} guest${n === 1 ? '' : 's'}` : `${n} ${countUnit}`)
+                          : `${n}${countUnit}`}</span>
                         {/* 1名だけは「満席」ではなく「条件あり」（1名利用は相席時のみ受付、というポリシー上の
                             制限であって、実際に満席とは限らない）。新規予約フロー（1390行目付近）には
                             既にこの分岐があるが、変更フローのボタンだけ漏れていた（ランダム客層視点
@@ -2168,9 +2621,9 @@ export default function Home() {
                       <>
                         <div style={{ marginBottom:8 }}>{t('この日は満席です。キャンセルが出た際にお知らせすることができます（先着順のためご案内をお約束するものではありません）。')}</div>
                         <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
-                          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')}
+                          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')} aria-label={t('お名前')}
                             style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--input-bg)', color:'var(--text)' }} />
-                          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')}
+                          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')} aria-label={t('電話番号')}
                             style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--input-bg)', color:'var(--text)' }} />
                         </div>
                         {wlErr && <div style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
@@ -2207,9 +2660,9 @@ export default function Home() {
                         </div>
                         {featureFlags.waitlistEnabled && (
                           <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
-                            <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')}
+                            <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')} aria-label={t('お名前')}
                               style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--white)', color:'var(--text)' }} />
-                            <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')}
+                            <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')} aria-label={t('電話番号')}
                               style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--white)', color:'var(--text)' }} />
                           </div>
                         )}
@@ -2250,9 +2703,9 @@ export default function Home() {
           </div>
           <div className="mt16">
             <button className="btn-p" onClick={() => {
-              if (!chgDate) { setChgErr(t('新しいご来店日を選択してください')); return scrollToCard('card-chg-date') }
+              if (!chgDate) { setChgErr(visitText('新しいご来店日を選択してください')); return scrollToCard('card-chg-date') }
               if (deadlinePassed(chgDate)) { setChgErr(t('選択された日付は予約受付期限を過ぎています')); return scrollToCard('card-chg-date') }
-              if (!chgTime) { setChgErr(t('新しい来店時間を選択してください')); return scrollToCard('card-chg-time') }
+              if (!chgTime) { setChgErr(visitText('新しい来店時間を選択してください')); return scrollToCard('card-chg-time') }
               if (guestCountEnabled && !chgGuests) { setChgErr(t('人数を選択してください')); return scrollToCard('card-chg-guest') }
               setChgErr('')
               setScreen('chgconfirm')
@@ -2278,7 +2731,7 @@ export default function Home() {
             <div className="cf-row">
               <div className="cf-lbl">{t('変更後')}</div>
               <div className="cf-val acc">
-                {fmtDateLang(chgDate, lang)}　{chgTime}〜{addMin(chgTime, chgStayMin)}　{effectiveChgGuests}{t('名様')}
+                {fmtDateLang(chgDate, lang)}　{chgTime}〜{addMin(chgTime, chgStayMin, lang)}　{guestsWithUnit(effectiveChgGuests)}
               </div>
             </div>
             {chgMsg.trim() && (
@@ -2292,8 +2745,22 @@ export default function Home() {
             ⚠️ {deadlineLabel(chgDate) || t('変更後の予約日が受付期限を過ぎている場合はキャンセル料が発生することがあります。')}
           </div>
           {chgcfErr && <div className="err mt12">{chgcfErr}</div>}
+          {/* 新規予約確認画面（1871行目付近）・期限後変更依頼（2037行目付近）には既にある明示的な同意
+              チェックボックスが、性質が同じ「伝言・要望（自由記述）」を送信するこの変更確定画面にだけ
+              存在しなかった（Apple CEO・ランダム客層の両視点が独立発見・ラウンド30での指摘）。 */}
+          <label className="mt16" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--sub)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={privacyConsent} onChange={(e) => setPrivacyConsent(e.target.checked)} style={{ marginTop: 2 }} />
+            <span>
+              {t('ご入力いただいた情報の取り扱い（')}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={openPrivacyLink} style={{ color: 'var(--info-text)', textDecoration: 'underline' }}>{t('こちら')}</a>
+              {t('）に同意します')}
+            </span>
+          </label>
+          {!privacyConsent && !chgSubmitting && (
+            <div className="mt8" style={{ fontSize: 12, color: 'var(--warn-text)', textAlign: 'center' }}>{t('上記の同意チェックが必要です')}</div>
+          )}
           <div className="mt16">
-            <button className="btn-p" disabled={chgSubmitting} onClick={submitChange}>
+            <button className="btn-p" disabled={chgSubmitting || !privacyConsent} onClick={submitChange}>
               {chgSubmitting ? t('送信中...') : t('変更を確定する')}
             </button>
             <div className="mt8">
@@ -2467,7 +2934,11 @@ export default function Home() {
         .err { background: var(--danger-bg); border: 1px solid var(--danger-border); border-radius: 8px; padding: 12px 14px; font-size: 13px; color: var(--red); }
         .cf-row { display: flex; padding: 13px 16px; border-bottom: 1px solid var(--border); gap: 12px; align-items: flex-start; }
         .cf-row:last-child { border-bottom: none; }
-        .cf-lbl { font-size: 12px; color: var(--sub); min-width: 72px; padding-top: 2px; white-space: nowrap; }
+        /* white-space:nowrapは「ご来店日」等の固定の短いラベル専用に設計されていたが、Q1/Q2の
+           見出し（q1Question/q3Question）が店舗の自由入力になったことで長文になり得るようになり、
+           親の.card（overflow:hidden）で無音にクリップされていた（審判団バックログ一括レビューでの
+           指摘）。折り返しを許可する。 */
+        .cf-lbl { font-size: 12px; color: var(--sub); min-width: 72px; padding-top: 2px; white-space: normal; word-break: break-word; }
         .cf-val { font-size: 14px; font-weight: bold; flex: 1; line-height: 1.5; }
         .cf-val.acc { color: var(--green); }
         .policy { background: var(--policy-bg); border: 1px solid var(--policy-border); border-radius: 8px; padding: 12px 14px; font-size: 12px; color: var(--policy-text); line-height: 1.7; }
@@ -2499,14 +2970,20 @@ export default function Home() {
           40% { transform: scale(1); opacity: 1; }
         }
         .ld-txt { margin-top: 20px; font-size: 14px; color: var(--sub); }
-        .hint { font-size: 11px; color: var(--hint); margin-top: 7px; line-height: 1.6; }
+        /* .hintクラスは「エラーではないが必ず読んでほしい注意書き」（受付できる時間帯の案内、
+           メール登録のお願い、代表者の扱い等）に使われており、装飾的な補足文言（凡例・広告ラベル等、
+           こちらは引き続きvar(--hint)を直接使う）とは役割が異なる。従来はvar(--hint)（#aaa/#777、
+           白背景に対してコントラスト比 約2.3:1）と非常に薄く、重要な案内文が読みにくかった
+           （審判団指摘対応）。既存のセカンダリテキスト用var(--sub)（#666/#aaa、コントラスト比
+           約5.7:1以上でWCAG AA相当）に変更し、装飾的な用途には影響を与えない。 */
+        .hint { font-size: 11px; color: var(--sub); margin-top: 7px; line-height: 1.6; }
         .deadline-note { font-size: 13px; font-weight: bold; color: var(--deadline-text); margin-top: 7px; line-height: 1.6; }
         .optional-toggle {
           width: 100%; text-align: left; background: transparent; border: 1.5px dashed var(--border);
           border-radius: 12px; padding: 13px 16px; margin-bottom: 14px; font-size: 13px; color: var(--sub);
           cursor: pointer;
         }
-        .card-lbl-optional { font-size: 12px; font-weight: bold; color: var(--sub); padding: 11px 16px 9px; border-bottom: 1px solid var(--border); letter-spacing: 0.5px; }
+        .card-lbl-optional { font-size: 12px; font-weight: normal; color: var(--sub); opacity: 0.75; padding: 11px 16px 9px; border-bottom: 1px dashed var(--border); letter-spacing: 0.5px; }
       `}</style>
     </>
   )

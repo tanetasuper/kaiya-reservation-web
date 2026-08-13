@@ -109,7 +109,7 @@ function SpecContent({ content, onLock }) {
   return (
     <>
       <Head>
-        <title>貝屋和光 予約システム 仕様書</title>
+        <title>汎用予約システム 仕様書</title>
         <meta name="robots" content="noindex, nofollow" />
       </Head>
       <div className="bar">
@@ -119,7 +119,7 @@ function SpecContent({ content, onLock }) {
       <header className="hero">
         <div className="inner">
           <div className="eyebrow">System Specification</div>
-          <h1>貝屋和光 予約システム — 仕様書</h1>
+          <h1>汎用予約システム — 仕様書</h1>
           <p>LINE予約システムの全体構成・機能・意図的に実装していない機能・運用体制をまとめたドキュメントです。営業資料や他店舗展開の検討時のベースとしても使えます。</p>
           <div className="meta">
             <span>対象：GAS 3プロジェクト ＋ Next.js（Vercel）</span>
@@ -256,7 +256,7 @@ function SpecContent({ content, onLock }) {
           </section>
         </main>
       </div>
-      <footer>貝屋和光 予約システム — システム仕様書（開発権限限定）</footer>
+      <footer>汎用予約システム — システム仕様書（開発権限限定）</footer>
 
       <style jsx>{`
         :global(html), :global(body) { margin: 0; background: #F5F7FA; color: #1B2430; font-family: "Hiragino Sans","Yu Gothic Medium","Noto Sans JP",sans-serif; line-height: 1.85; font-size: 15px; }
