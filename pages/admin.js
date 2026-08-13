@@ -101,11 +101,18 @@ function summarizeBulkMarkResult(results) {
 // よいのかが一切わからない（ランダム客層視点レビュー・ラウンド43での指摘：staffが原因不明の英語
 // エラーで詰まるケースがあった）。この内部由来の技術メッセージだけを分かりやすい日本語に差し替え、
 // それ以外（Code.gsが発行した業務エラー）はそのまま見せる。
+// 既知の3パターンに加えて、日本語文字を一切含まない文字列も技術的メッセージとして扱う
+// （pages/api/gas.jsのcatch節はGASへのfetch自体が失敗した場合err.messageをそのまま返す＝
+// 内容が予測できない英語の例外メッセージになりうるし、GAS側の未処理例外（TypeError等）も同様に
+// 英語のまま返ってくるため、既知パターンの列挙だけでは網羅できない。Code.gsの業務エラーは
+// コメントにある通り必ず日本語の文なので、日本語を含まない＝内部由来の技術メッセージという判定は
+// 安全な近似になる。ランダム客層視点レビュー・ラウンド44での指摘）。
 const TECHNICAL_ERROR_PATTERNS = [/^GAS returned non-JSON/, /^GASタイムアウト/, /^GAS_URL not set/]
+const HAS_JAPANESE_RE = /[぀-ヿ㐀-鿿]/
 function friendlyServerError(r, fallback) {
   const raw = r && r.error
   if (!raw) return fallback
-  if (TECHNICAL_ERROR_PATTERNS.some(p => p.test(raw))) {
+  if (TECHNICAL_ERROR_PATTERNS.some(p => p.test(raw)) || !HAS_JAPANESE_RE.test(raw)) {
     return `保存できませんでした。時間をおいて再度お試しください。繰り返し失敗する場合は開発担当にご連絡ください（詳細：${raw}）`
   }
   return raw
@@ -541,8 +548,8 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
         expectedStatus: res.status, expectedDate: res.date, expectedTime: formatTime(res.time) || '', expectedGuests: String(res.guests),
       })
       if (r.success) { showToast('更新しました'); onSaved() }
-      else if (r.conflict) { showToast(r.error||'他の操作でこの予約の内容が変更されています。画面を閉じて最新の内容を確認してください。','error'); }
-      else showToast(r.error||'更新に失敗しました','error')
+      else if (r.conflict) { showToast(friendlyServerError(r, '他の操作でこの予約の内容が変更されています。画面を閉じて最新の内容を確認してください。'),'error'); }
+      else showToast(friendlyServerError(r, '更新に失敗しました'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setSaving(false)
   }
@@ -566,7 +573,7 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
     try {
       const r = await api.adminSetEstimate(res.id, amt, estimateNote, estimatePartsAmount || undefined, estimateLaborAmount || undefined)
       if (r.success) { showToast('見積を送信しました'); setEstimateStatus('提示済み') }
-      else showToast(r.error || '送信に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '送信に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setEstimateSending(false)
   }
@@ -579,7 +586,7 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
     try {
       const r = await api.adminMarkEstimateWorkDone(res.id)
       if (r.success) { showToast('作業完了を通知しました'); setEstimateStatus('完了') }
-      else showToast(r.error || '通知に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '通知に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setEstimateWorkDoneSending(false)
   }
@@ -590,7 +597,7 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
     try {
       const r = await api.adminCancelSeries(res.seriesId)
       if (r.success) { showToast(`${r.count}件をキャンセルしました`); onSaved() }
-      else showToast(r.error || 'キャンセルに失敗しました', 'error')
+      else showToast(friendlyServerError(r, 'キャンセルに失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setSeriesCanceling(false)
   }
@@ -863,7 +870,7 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots, dailyHo
       // 強制登録済みでも一部のブロック（確定済み貸切日など）はforceAddで突破できず、その場合サーバーは
       // blocked:true＋reasonを返す（errは無い）。ここをr.errorだけ見ていると「登録に失敗しました」という
       // 汎用文言しか出ず、なぜ失敗したかスタッフに伝わらなかった（スタッフ視点レビューでの指摘）。
-      else setErr(r.blocked ? r.reason : (r.error||'登録に失敗しました'))
+      else setErr(r.blocked ? r.reason : friendlyServerError(r, '登録に失敗しました'))
     } catch { setErr('通信エラーが発生しました。もう一度お試しください') }
     setAdding(false)
   }
@@ -1144,7 +1151,7 @@ function SetupWizard({ onClose, onApply }) {
                 「自分は何を失うのか」が実感しにくく読み飛ばされる（業種経営者陣視点レビュー・
                 第43回での指摘）。具体的な項目名に置き換える。 */}
             <div style={{ background:'var(--amber-bg)', border:'1px solid var(--amber-border)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'var(--amber-text)', marginBottom:12 }}>
-              ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。この操作は「{preset.label}」プリセットの設定項目（呼び方、お客様への質問の選択肢（Q1/Q2）、受付締切の日数・時刻、貸切等の追加機能のON/OFF、通知タブの店舗専用項目の表示 等、上記の質問に出てこない項目も含む）を丸ごと上書きします。初めての導入設定ではなく、運用中の設定を一部だけ見直したい場合は、ウィザードではなく「設定」「配信設定」タブから個別に変更することをおすすめします。
+              ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。この操作は「{preset.label}」プリセットの設定項目（呼び方、お客様への質問の選択肢（Q1/Q2）、受付締切の日数・時刻、貸切等の追加機能のON/OFF、通知タブに追加されているこの業種専用のお知らせ項目（あれば） 等、上記の質問に出てこない項目も含む）を丸ごと上書きします。初めての導入設定ではなく、運用中の設定を一部だけ見直したい場合は、ウィザードではなく「設定」「配信設定」タブから個別に変更することをおすすめします。
             </div>
             <div style={{ background:'var(--bg-subtle)', borderRadius:10, padding:14, fontSize:13, color:'var(--text-primary)', lineHeight:1.8, marginBottom:12 }}>
               <div><b>業種：</b>{preset.label}</div>
@@ -1599,7 +1606,7 @@ export default function Admin() {
     try {
       const r = await api.adminResetSystemStop()
       if (r.success) { showToast('表示を消しました'); setSystemStopped(false) }
-      else showToast(r.error||'解除に失敗しました','error')
+      else showToast(friendlyServerError(r, '解除に失敗しました'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setResettingStop(false)
   }
@@ -1751,7 +1758,7 @@ export default function Admin() {
         setNewAccountName(''); setNewAccountPassword(''); setNewAccountRole('staff'); setEditingAccountId(null); setShowAddAccount(false)
         loadStaffAccounts()
       } else {
-        showToast(r.error || '保存に失敗しました', 'error')
+        showToast(friendlyServerError(r, '保存に失敗しました'), 'error')
       }
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setSavingAccount(false)
@@ -1762,7 +1769,7 @@ export default function Admin() {
     try {
       const r = await api.adminRemoveStaffAccount(account.id)
       if (r.success) { showToast('アカウントを削除しました'); loadStaffAccounts() }
-      else showToast(r.error || '削除に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '削除に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
   }
 
@@ -1802,7 +1809,7 @@ export default function Admin() {
         loadTrash()
         loadReservations()
       }
-      else showToast(r.error || '復元に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '復元に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました', 'error') }
   }
 
@@ -1839,9 +1846,9 @@ export default function Admin() {
         showToast('配信設定を保存しました')
       }
       else if (r.conflict) {
-        if (window.confirm((r.error || '他の管理者が先に保存しました。') + '\n画面を再読み込みしますか？')) await loadFset()
+        if (window.confirm(friendlyServerError(r, '他の管理者が先に保存しました。') + '\n画面を再読み込みしますか？')) await loadFset()
       }
-      else showToast(r.error || '保存に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '保存に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setFsetSaving(false)
   }
@@ -1955,7 +1962,7 @@ export default function Admin() {
     try {
       const r = await api.adminRemoveWaitlist(id)
       if (r.success) { showToast('削除しました'); loadWaitlist() }
-      else showToast(r.error || '削除に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '削除に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました', 'error') }
   }
 
@@ -1985,7 +1992,7 @@ export default function Admin() {
     try {
       const r = await api.adminSetGroupBId(capturedGroupId)
       if (r.ok) { showToast('グループBを設定しました'); setSettings(s => ({ ...s, hasGroupB: true })) }
-      else showToast(r.error || '設定に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '設定に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setSettingGroupB(false)
   }
@@ -2010,7 +2017,7 @@ export default function Admin() {
         ...(connLineTokenInput ? { lineToken: connLineTokenInput } : {}),
       })
       if (r.success) { showToast('接続設定を保存しました'); setConnLineTokenInput(''); loadConnectionSettings() }
-      else showToast(r.error || '保存に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '保存に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setConnSaving(false)
   }
@@ -2020,7 +2027,7 @@ export default function Admin() {
     try {
       const r = await api.saveNotificationSettings(notifSettings)
       if (r.success) showToast('通知設定を保存しました')
-      else showToast(r.error || '保存に失敗しました', 'error')
+      else showToast(friendlyServerError(r, '保存に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setNotifSettingsSaving(false)
   }
@@ -2105,9 +2112,14 @@ export default function Admin() {
     try {
       const r = await api.adminBulkCancelByDate(date.replace(/\//g, '-'), reason)
       if (r.success) {
-        showToast(`${r.count}件をキャンセルしました${r.notifyFailCount > 0 ? `（${r.notifyFailCount}件は通知送信に失敗）` : ''}`)
+        // 件数だけでは「誰への連絡が送れなかったか」が画面上で分からず、LINEの管理者通知を別途
+        // 確認しないと手動フォローに動けなかった（Meta CEO視点レビュー・審判団ラウンド44での指摘：
+        // 単一予約キャンセルの失敗エスカレーションは名前・予約IDまで出るのに、一括キャンセルだけ
+        // 「画面の確認」と「実際に送られた通知」の間にギャップがあった）。
+        // サーバーが返すnotifyFailedNamesをそのままトーストに出す。
+        showToast(`${r.count}件をキャンセルしました${r.notifyFailCount > 0 ? `（${r.notifyFailCount}件は通知送信に失敗：${(r.notifyFailedNames || []).join('、')}）` : ''}`)
         refreshRes()
-      } else showToast(r.error || '一斉キャンセルに失敗しました', 'error')
+      } else showToast(friendlyServerError(r, '一斉キャンセルに失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setBulkCancelling(false)
   }
@@ -2119,7 +2131,7 @@ export default function Admin() {
     try {
       const r = await api.adminUpdateReservation({ id: res.id, status: 'キャンセル' })
       if (r.success) { showToast('キャンセルにしました'); refreshRes() }
-      else showToast(r.error||'キャンセルに失敗しました','error')
+      else showToast(friendlyServerError(r, 'キャンセルに失敗しました'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setCancelingResId(null)
   }
@@ -2135,7 +2147,7 @@ export default function Admin() {
     try {
       const r = await api.adminDeleteReservation(res.id, '')
       if (r.success) { showToast('削除しました'); refreshRes() }
-      else showToast(r.error||'削除に失敗しました','error')
+      else showToast(friendlyServerError(r, '削除に失敗しました'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setCancelingResId(null)
   }
@@ -2148,7 +2160,7 @@ export default function Admin() {
     try {
       const r = await api.adminSetSeatBlock(selectedDate.replace(/\//g,'-'), seatInput.seats, seatInput.reason)
       if (r.success) { showToast('受付停止枠を設定しました'); setShowSeatForm(false); loadSeatBlocks() }
-      else showToast(r.error||'設定に失敗しました','error')
+      else showToast(friendlyServerError(r, '設定に失敗しました'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setSeatSaving(false)
   }
@@ -2160,7 +2172,7 @@ export default function Admin() {
     try {
       const r = await api.adminRemoveSeatBlock(selectedDate.replace(/\//g,'-'))
       if (r.success) { showToast('受付停止枠を解除しました'); setShowSeatForm(false); loadSeatBlocks() }
-      else showToast(r.error||'エラーが発生しました。もう一度お試しください','error')
+      else showToast(friendlyServerError(r, 'エラーが発生しました。もう一度お試しください'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setSeatSaving(false)
   }
@@ -2180,7 +2192,7 @@ export default function Admin() {
     try {
       const r = await api.adminSetDateOverride(selectedDate.replace(/\//g,'-'), hoursInput)
       if (r.success) { showToast('この日の営業時間を変更しました'); setShowHoursForm(false); loadDateOverrides() }
-      else showToast(r.error||'設定に失敗しました','error')
+      else showToast(friendlyServerError(r, '設定に失敗しました'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setHoursSaving(false)
   }
@@ -2195,7 +2207,7 @@ export default function Admin() {
     try {
       const r = await api.adminRemoveDateOverride(selectedDate.replace(/\//g,'-'))
       if (r.success) { showToast('営業時間の変更を解除しました'); setShowHoursForm(false); loadDateOverrides() }
-      else showToast(r.error||'エラー','error')
+      else showToast(friendlyServerError(r, 'エラー'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setHoursSaving(false)
   }
@@ -2208,7 +2220,7 @@ export default function Admin() {
     try {
       const r = await api.adminRemoveBlockedDate(date)
       if (r.success) { showToast('解除しました'); loadBlocked() }
-      else showToast(r.error||'エラー','error')
+      else showToast(friendlyServerError(r, 'エラー'),'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
   }
 
@@ -2218,7 +2230,7 @@ export default function Admin() {
     setSelectedNotifIds(prev => { const s = new Set(prev); s.delete(id); return s })
     try {
       const r = await api.adminMarkNotificationRead(id)
-      if (!r.success) { showToast(r.error||'エラー','error'); loadNotifications() }
+      if (!r.success) { showToast(friendlyServerError(r, 'エラー'),'error'); loadNotifications() }
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error'); loadNotifications() }
   }
 
@@ -2273,7 +2285,7 @@ export default function Admin() {
         showToast('設定を保存しました')
       }
       else if (r.conflict) {
-        if (window.confirm((r.error || '他の管理者が先に保存しました。') + '\n画面を再読み込みしますか？')) await loadSettings()
+        if (window.confirm(friendlyServerError(r, '他の管理者が先に保存しました。') + '\n画面を再読み込みしますか？')) await loadSettings()
       }
       else showToast(friendlyServerError(r, '保存に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
@@ -2286,7 +2298,7 @@ export default function Admin() {
     api.adminSetBlockedDate(date.replace(/\//g,'-'), '')
       .then(r => {
         if (r.success) { showToast('休業日に設定しました'); loadBlocked() }
-        else showToast(r.error||'設定に失敗しました','error')
+        else showToast(friendlyServerError(r, '設定に失敗しました'),'error')
       })
       .catch(() => showToast('通信エラーが発生しました。もう一度お試しください','error'))
       .finally(() => setClosedDayAdding(false))
@@ -3274,7 +3286,7 @@ export default function Admin() {
                               指摘）。ウィザード側と同じ常時表示のアンバー警告を、確認ダイアログを開く前の
                               段階で出す（window.confirm自体は最終確認として残す）。 */}
                           <div style={{ background:'var(--amber-bg)', border:'1px solid var(--amber-border)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'var(--amber-text)', marginTop:8 }}>
-                            ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。「適用する」を押すと「{VERTICAL_PRESETS.find(p => p.key === presetChoice)?.label}」プリセットの設定項目（呼び方、お客様への質問の選択肢（Q1/Q2）、受付締切の日数・時刻、貸切等の追加機能のON/OFF、通知タブの店舗専用項目の表示 等）を丸ごと上書きします。運用中の設定を一部だけ見直したい場合は、「設定」「配信設定」タブから個別に変更することをおすすめします。
+                            ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。「適用する」を押すと「{VERTICAL_PRESETS.find(p => p.key === presetChoice)?.label}」プリセットの設定項目（呼び方、お客様への質問の選択肢（Q1/Q2）、受付締切の日数・時刻、貸切等の追加機能のON/OFF、通知タブに追加されているこの業種専用のお知らせ項目（あれば） 等）を丸ごと上書きします。運用中の設定を一部だけ見直したい場合は、「設定」「配信設定」タブから個別に変更することをおすすめします。
                           </div>
                         </>
                       )}
@@ -3620,20 +3632,6 @@ export default function Admin() {
                         style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
                       <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>予約画面・LINE通知・メールの「ご来店」等の文言に使われます（クリニックなら「来院」、面接なら「来訪」等）</div>
                     </div>
-                    <div>
-                      {/* countUnit（残数・人数の単位）は予約画面の残席表示・人数選択ボタン、管理画面の
-                          担当者一覧・受付停止枠・期間限定増席枠等、コード側では既に広く使われていたが、
-                          この設定タブには一度も編集用の入力欄が存在しなかった（業態プリセット適用時にのみ
-                          設定される値で、直接編集する手段が無かった）。そのため、上の「呼び方」欄で
-                          staffLabelを「リフト」等の資産名にカスタマイズしても、countUnitは「名」のまま
-                          追従せず「対応可能なリフト 3名」のような不自然な表示になる実害があった
-                          （業種経営者陣視点レビュー・第42回での指摘：車修理工場のリフト単位運用を想定）。 */}
-                      <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>残数・人数表示の単位（名・台・件等に変更可）</label>
-                      <input value={settings.countUnit || ''} onChange={e => setSettings(s => ({ ...s, countUnit: e.target.value }))}
-                        placeholder="名"
-                        style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
-                      <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>予約画面の残席表示・人数選択ボタン、管理画面の{settings.staffLabel || '担当者'}一覧・受付停止枠等に使われます（レンタカーの車両、整備工場のリフト等「台」で数える資産を{settings.staffLabel || '担当者'}として登録する場合はここを「台」に変更してください）</div>
-                    </div>
                     {settings.bookingMode === 'simple' && (
                       <>
                         <div>
@@ -3715,6 +3713,28 @@ export default function Admin() {
                     <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:6 }}>
                       2つ以上ONにすると、お客様画面に言語切り替えボタンが表示されます。英語訳は予約の基本フロー（日付・時間・人数・連絡先・確認・完了・マイ予約・変更）のみに対応しており、コース名・Q1/Q2の選択肢・お知らせ文など店舗が入力する内容は翻訳されません（入力した言語のまま表示されます）。
                     </div>
+                  </div>
+
+                  <div style={{ marginTop:16, paddingTop:14, borderTop:'1px solid var(--border-light)' }}>
+                    {/* countUnit（残数・人数の単位）は予約画面の残席表示・人数選択ボタン、管理画面の
+                        担当者一覧・受付停止枠・期間限定増席枠等、コード側では既に広く使われていたが、
+                        この設定タブには一度も編集用の入力欄が存在しなかった（業態プリセット適用時にのみ
+                        設定される値で、直接編集する手段が無かった）。そのため、下の「呼び方」欄で
+                        staffLabelを「リフト」等の資産名にカスタマイズしても、countUnitは「名」のまま
+                        追従せず「対応可能なリフト 3名」のような不自然な表示になる実害があった
+                        （業種経営者陣視点レビュー・第42回での指摘：車修理工場のリフト単位運用を想定）。
+                        以前はこの入力欄がコース設定グリッド側（「コース」呼び方・アイコン・来店呼び方と
+                        並ぶ場所）にあり、ヒント文が直後の「担当者」の呼び方欄を前提にした内容なのに、
+                        その担当者欄自体は100行近く下の別ブロックにあって画面上つながって見えなかった
+                        （ラウンド42・43でも指摘されたまま持ち越されていたバックログ。ラウンド44で
+                        「担当者の指名機能」欄の直前に移設し、視覚的に隣接させた。countUnit自体は
+                        staffAssignmentEnabledのON/OFFに関わらず常に必要な設定のため、この移設後も
+                        表示条件は変更していない）。 */}
+                    <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>残数・人数表示の単位（名・台・件等に変更可）</label>
+                    <input value={settings.countUnit || ''} onChange={e => setSettings(s => ({ ...s, countUnit: e.target.value }))}
+                      placeholder="名"
+                      style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', maxWidth:220, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
+                    <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4, marginBottom:14 }}>予約画面の残席表示・人数選択ボタン、管理画面の{settings.staffLabel || '担当者'}一覧・受付停止枠等に使われます（レンタカーの車両、整備工場のリフト等「台」で数える資産を下の{settings.staffLabel || '担当者'}として登録する場合はここを「台」に変更してください）</div>
                   </div>
 
                   <div style={{ marginTop:16, paddingTop:14, borderTop:'1px solid var(--border-light)' }}>

@@ -10,6 +10,17 @@ const LIFF_ID = process.env.NEXT_PUBLIC_LIFF_ID || '2010107032-v35Ka2mS'
 const TIME_SLOTS = ['17:00', '17:30', '18:00', '18:30', '19:00', '19:30', '20:00', '20:30', '21:00']
 const STAY_MIN = 150
 
+// 入力画面（selDate/selTime/名前・電話番号・メモ等）はReactのstateのみに保持しており、どこにも
+// 永続化していなかった。電波の悪い／低スペックな端末（このランダム客層が使うような機種）でLINEの
+// アプリ内ブラウザがバックグラウンドで回線チェック等のためにWebViewプロセスを破棄すると、復帰時に
+// ページが最初から再読み込みされ、入力画面まで進んでいた内容（名前・電話番号・日時・コース等）が
+// 何の予告もなく全て消えてしまう。確定直前で失うほど実害が大きい（ランダム客層視点レビュー・
+// ラウンド44での指摘）。入力画面にいる間だけ内容をsessionStorageへこまめに保存し、復帰時に復元する。
+// localStorageではなくsessionStorageを使うのは、タブ（LIFFのWebView）が完全に閉じられれば自動的に
+// 消えるため、何日も前の古い入力が別の来店予定と混ざって復元される事故を避けられるから。
+const BOOKING_DRAFT_KEY = 'kaiya_booking_draft_v1'
+const BOOKING_DRAFT_MAX_AGE_MS = 6 * 60 * 60 * 1000 // 6時間より古い保存内容は日時選択などが現実味を失うため復元しない
+
 // 検索エンジン向けの構造化データ（JSON-LD）のschema.orgタイプが、業態を問わず常に汎用の'LocalBusiness'
 // 固定だった（累積指摘の総棚卸しでの指摘：汎用予約プラットフォーム化の本旨に反する）。管理画面の
 // 「業種」設定（businessCategory、未選択なら空文字）から、より具体的なschema.orgタイプへマッピングする。
@@ -815,6 +826,21 @@ export default function Home() {
       ? `Failed to check ${staffLabel} availability. Please try again with a better connection.`
       : `${staffLabel}の確認に失敗しました。電波の良い場所でもう一度お試しください。`
   }
+  // キャンセル待ちの通知条件（strict）ラジオの文言「ちょうどこの時間・担当者が空いたときだけ通知する」が、
+  // capacityModel!=='daily'の全業態（timeSlot・perStaff）で固定文字列のまま表示されていた（業種経営者陣視点
+  // レビュー・第44回：car_rental/leisure_equipのperStaff+資産系countUnitウォークスルーでの指摘）。
+  // (1) perStaffでもstaffLabelが「車両」「器材」等の資産名の業態（car_rental・leisure_equip）では
+  // 「担当者」という人物を指す言葉が実際の対象（車両・器材）とズレる。(2) timeSlot業態（レンタサイクル等、
+  // staffAssignmentEnabled:false）ではそもそも担当者という概念自体が存在せず（joinWaitlist内、916行目
+  // 付近でstaffを送っていない）、「担当者」という言葉が実在しない選択肢を匂わせてしまう。perStaffの場合は
+  // staffLabelを埋め込み、それ以外（timeSlot）では担当者に触れない文言にする（staffCheckingText等と
+  // 同じくt()辞書を経由せずlangで直接分岐する）。
+  function waitlistStrictLabel() {
+    if (capacityModel === 'perStaff') {
+      return lang === 'en' ? `Only notify me when exactly this time and ${staffLabel} open up` : `ちょうどこの時間・${staffLabel}が空いたときだけ通知する`
+    }
+    return lang === 'en' ? 'Only notify me when exactly this time opens up' : 'ちょうどこの時間が空いたときだけ通知する'
+  }
 
   // ===== 空席取得 =====
   async function fetchAvailability(date, time, course, staff) {
@@ -991,6 +1017,7 @@ export default function Home() {
         setMyRes([])
       }).finally(() => setMyResLoading(false))
     } else {
+      restoreBookingDraftIfAny()
       setScreen('input')
     }
   }, [])
@@ -1162,6 +1189,51 @@ export default function Home() {
     setSelTime('')
   }, [selCourse])
 
+  // 入力画面にいる間だけ、入力途中の内容をsessionStorageへ保存する（上記BOOKING_DRAFT_KEYのコメント参照）。
+  // 「確認画面へ」を押す前の、まだ何も送信していない状態を保存対象にする。
+  useEffect(() => {
+    if (screen !== 'input') return
+    try {
+      sessionStorage.setItem(BOOKING_DRAFT_KEY, JSON.stringify({
+        savedAt: Date.now(),
+        selDate, selTime, selGuest, selStaff, selCourse,
+        name, phone, email, q1, q1Other, q3, q3Other, notes, companions,
+      }))
+    } catch {}
+  }, [screen, selDate, selTime, selGuest, selStaff, selCourse, name, phone, email, q1, q1Other, q3, q3Other, notes, companions])
+
+  // 送信完了・キャンセル済み等、この下書きがもう不要になった時に消す（次回訪問時に古い内容が
+  // 誤って復元されないようにする）。
+  function clearBookingDraft() {
+    try { sessionStorage.removeItem(BOOKING_DRAFT_KEY) } catch {}
+  }
+  // proceedAfterAuth（LINEログイン後／ゲストモード決定後、入力画面に入る直前）から一度だけ呼ぶ。
+  // 復元後もavail（残席状況）はまだ取得していないため、選択済みの日付があれば裏側で取り直す
+  // （選択自体は既にUIに反映されるので、画面がいきなり空になるようなことはない）。
+  function restoreBookingDraftIfAny() {
+    try {
+      const raw = sessionStorage.getItem(BOOKING_DRAFT_KEY)
+      if (!raw) return
+      const d = JSON.parse(raw)
+      if (!d || !d.savedAt || Date.now() - d.savedAt > BOOKING_DRAFT_MAX_AGE_MS) { clearBookingDraft(); return }
+      if (d.selDate) setSelDate(d.selDate)
+      if (d.selTime) setSelTime(d.selTime)
+      if (d.selGuest) setSelGuest(d.selGuest)
+      if (d.selStaff) setSelStaff(d.selStaff)
+      if (typeof d.selCourse === 'number') setSelCourse(d.selCourse)
+      if (d.name) setName(d.name)
+      if (d.phone) setPhone(d.phone)
+      if (d.email) setEmail(d.email)
+      if (d.q1) setQ1(d.q1)
+      if (d.q1Other) setQ1Other(d.q1Other)
+      if (d.q3) setQ3(d.q3)
+      if (d.q3Other) setQ3Other(d.q3Other)
+      if (d.notes) setNotes(d.notes)
+      if (Array.isArray(d.companions) && d.companions.length) setCompanions(d.companions)
+      if (d.selDate) { ensureHolidays(); fetchAvailability(d.selDate, d.selTime || undefined) }
+    } catch {}
+  }
+
   // ===== バリデーション =====
   // エラー発生時、原因の項目までスクロールして分かりやすくする
   function scrollToCard(id) {
@@ -1246,6 +1318,21 @@ export default function Home() {
     if (guestUnit === '名') return `${g}${t('名様')}`
     return lang === 'en' ? `${g} ${guestUnit}` : `${g}${guestUnit}`
   }
+  // 「13名以上・大人数のご相談」（konsultボタン・確認/完了画面等）も guestsWithUnit と同じ理由で
+  // 「名」がハードコードされたまま取り残されていた（貸切機能fset.kasshiki.enabledはperStaff以外の
+  // 全業態でON可能なため、countUnit='台'のレンタサイクル等が貸切機能をONにすると「13名以上」という
+  // 誤った単位が表示される。Apple CEO視点レビュー・第44回、round43の「ボタンラベル以外の取り残し」
+  // 総点検での指摘）。ボタンの選択肢が1〜12までな（1809行目付近）ため「13」自体は業態を問わず
+  // 固定でよいが、単位はguestUnitに従わせる。
+  function konsultGuestLabel() {
+    if (guestUnit === '名') return t('13名以上・人数未定（ご相談）')
+    return lang === 'en' ? `13+ ${guestUnit} / undecided (consultation)` : `13${guestUnit}以上・人数未定（ご相談）`
+  }
+  function konsultButtonLabel(disabled) {
+    if (guestUnit === '名') return disabled ? t('💬 13名以上・大人数のご相談 — 本日は受付不可') : t('💬 13名以上・大人数のご相談')
+    if (lang === 'en') return disabled ? `💬 Consult for 13+ ${guestUnit} — unavailable today` : `💬 Consult for 13+ ${guestUnit}`
+    return disabled ? `💬 13${guestUnit}以上・大人数のご相談 — 本日は受付不可` : `💬 13${guestUnit}以上・大人数のご相談`
+  }
   // 予約済みレコードの人数表示（'未定'＝人数未確定の予約は言語に応じて翻訳表示する。
   // 生の '未定' 文字列に単位を連結すると英語表示時に "未定 guests" のような
   // 言語混在表示になってしまうため、未確定値は必ず t('人数未定') 経由で表示する）
@@ -1260,7 +1347,7 @@ export default function Home() {
     setPrivacyConsent(false)
     const d = parseDate(selDate)
     const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
-    const guestStr = selGuest === 'konsult' ? t('13名以上・人数未定（ご相談）') : effectiveGuests ? guestsWithUnit(effectiveGuests) : t('人数未定')
+    const guestStr = selGuest === 'konsult' ? konsultGuestLabel() : effectiveGuests ? guestsWithUnit(effectiveGuests) : t('人数未定')
     const baseDetail = `${fmtDateLang(selDate, lang)}　${selTime}〜${addMin(selTime, selStayMin, lang)}\n${guestStr}${isKasshiki ? t('（貸切）') : ''}`
     const doneTitle = isKasshiki ? t('貸切お申し込みを受け付けました') : t('ご予約を承りました')
     const commonPayload = {
@@ -1299,6 +1386,7 @@ export default function Home() {
               : `確定：${r.successCount}回／不成立：${r.failCount}回（${failedDates.join('、')}）\n不成立の回は個別にご連絡します。`)
             : (lang === 'en' ? `All ${r.successCount} occurrences confirmed.` : `全${r.successCount}回、すべて確定しました。`)
           setDone({ detail: baseDetail + '\n\n📅 ' + summary, id: '', pending: false, error: '', backScreen: 'confirm', title: doneTitle, pendingApproval: false })
+          clearBookingDraft()
         } else {
           setDone(prev => ({ ...prev, pending: false, error: r.error || t('予約に失敗しました') }))
         }
@@ -1311,6 +1399,7 @@ export default function Home() {
           ? baseDetail + '\n\n' + t('内容を確認後、ご連絡いたします。')
           : baseDetail + t('\n\nLINEに確認メッセージをお送りしました。')
         setDone({ detail: doneMsg, id: `${t('予約番号：')}${r.reservationId}`, pending: false, error: '', backScreen: 'confirm', title: doneTitle, pendingApproval: isKasshiki })
+        clearBookingDraft()
       } else {
         setDone(prev => ({ ...prev, pending: false, error: r.error || t('予約に失敗しました') }))
       }
@@ -1710,7 +1799,13 @@ export default function Home() {
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="course-row">
-                        <div className="course-nm">{c.name}</div>
+                        {/* コースカードの選択状態が枠線の色（border-color: var(--green) vs var(--border)）のみで
+                            示されており、色を判別しづらい弱視のお客様には選択中かどうかが伝わらなかった
+                            （aria-checkedは既にあるためスクリーンリーダー上は問題無いが、色以外の視覚的な
+                            手がかりが無かった。Appleデザインチーム視点レビュー・ラウンド44での指摘：round41から
+                            の「色のみの選択状態」バックログの定義的な棚卸し）。カレンダーの選択マス（✓表示）と
+                            同じ手法で、選択中は名称の前に✓を付ける。 */}
+                        <div className="course-nm">{visibleCourses.length > 1 && selCourse === i ? '✓ ' : ''}{c.name}</div>
                         <div className="course-pr">¥{Number(c.price).toLocaleString()}<small>{lang === 'en' ? ' (tax incl.)' : '（税込）'}</small></div>
                       </div>
                       {c.description && <div className="course-dc">{c.description}</div>}
@@ -1867,7 +1962,7 @@ export default function Home() {
                             <div style={{ marginBottom:4 }}>{t('どのように通知しますか？')}</div>
                             <label style={{ display:'flex', alignItems:'center', gap:6, marginBottom:2, cursor:'pointer' }}>
                               <input type="radio" checked={wlNotifyCondition === 'strict'} onChange={() => setWlNotifyCondition('strict')} />
-                              <span>{t('ちょうどこの時間・担当者が空いたときだけ通知する')}</span>
+                              <span>{waitlistStrictLabel()}</span>
                             </label>
                             <label style={{ display:'flex', alignItems:'center', gap:6, cursor:'pointer' }}>
                               <input type="radio" checked={wlNotifyCondition === 'anyTime'} onChange={() => setWlNotifyCondition('anyTime')} />
@@ -1936,7 +2031,7 @@ export default function Home() {
                         setInputErr('')
                       }}
                     >
-                      {konsultDisabled() && avail ? t('💬 13名以上・大人数のご相談 — 本日は受付不可') : t('💬 13名以上・大人数のご相談')}
+                      {konsultButtonLabel(konsultDisabled() && avail)}
                     </button>
                   </>
                 )}
@@ -2028,7 +2123,7 @@ export default function Home() {
                         （ランダム客層視点レビュー・ラウンド36での指摘）。guestsWithUnit自体が言語分岐を
                         持つため、ここでは呼ぶだけでよい。 */}
                     {selGuest && selGuest !== 'konsult' && <p className="k-note" style={{ marginTop:4 }}>{(lang === 'en' ? 'Selected party size: ' : '選択人数：') + guestsWithUnit(selGuest)}</p>}
-                    {selGuest === 'konsult' && <p className="k-note" style={{ marginTop:4 }}>{t('13名以上・人数未定（ご相談）')}</p>}
+                    {selGuest === 'konsult' && <p className="k-note" style={{ marginTop:4 }}>{konsultGuestLabel()}</p>}
                     <button className="myres-link" style={{ marginTop:10, fontSize:13 }} onClick={() => {
                       setIsKasshiki(false)
                       setIsKonsult(false)
@@ -2219,7 +2314,7 @@ export default function Home() {
             </div>
             <div className="cf-row">
               <div className="cf-lbl">{t('人数')}</div>
-              <div className="cf-val">{selGuest === 'konsult' ? t('13名以上・人数未定（ご相談）') : effectiveGuests ? guestsWithUnit(effectiveGuests) : t('人数未定')}</div>
+              <div className="cf-val">{selGuest === 'konsult' ? konsultGuestLabel() : effectiveGuests ? guestsWithUnit(effectiveGuests) : t('人数未定')}</div>
             </div>
             {isKasshiki && (
               <div className="cf-row">
@@ -2316,8 +2411,19 @@ export default function Home() {
                       に限られる。この2条件のどちらにも当たらない場合（飲食店のように人数を選ばせつつ
                       お一人様単価で課金する業態）は、誤った金額を見せるリスクを避けて表示しない
                       （Apple CEO視点レビュー・第43回：countUnitが独立した入力欄になったことで初めて
-                      この条件分岐が安全に書けるようになった）。 */}
-                  {!isSimpleMode && (countUnit === '台' || !guestCountEnabled) && Number.isFinite(Number(visibleCourses[selCourse]?.price)) && (
+                      この条件分岐が安全に書けるようになった）。
+                      第43回の実装は上の単価表示行（2260行目付近）と同じ`!isSimpleMode`もこの条件に含めて
+                      いたが、これは価格の安全性とは無関係の別条件だった（業種経営者陣視点レビュー・第44回：
+                      定期予約を実際に使いたがる学習塾面談プリセットで検証した際に発覚）。学習塾面談・面接・
+                      定食業態（simple_dining）等のbookingMode==='simple'業態でも、admin.js側は
+                      settings.bookingMode==='simple'時に専用の単価入力欄（defaultCourseName＋price）を出し、
+                      保存先はcourse制と同じcourses配列（Code.gs）のため、visibleCourses[selCourse]?.priceは
+                      simple業態でも実在する正しい値。`!isSimpleMode`が付いていたのは単に「コース選択カード自体が
+                      無いモードなので単価表示行そのものを出さない」という無関係なUI都合を流用していたためで、
+                      guestCountEnabledがOFFの学習塾面談・面接（人数が常に1名固定＝合計計算は安全）まで
+                      一律で総額を見せられなくなっていた。単価が人数に左右されない条件はcountUnit/guestCountEnabled
+                      だけで既に十分なため、isSimpleModeは外す。 */}
+                  {(countUnit === '台' || !guestCountEnabled) && Number.isFinite(Number(visibleCourses[selCourse]?.price)) && (
                     <div style={{ fontSize: 12, color: 'var(--sub)', marginTop: 4, lineHeight: 1.7 }}>
                       {lang === 'en'
                         ? `Total (approx.): ¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()} for ${recurringCount} visits`
@@ -2527,7 +2633,18 @@ export default function Home() {
                     （myResは日付順のため、同じseriesIdの最初の出現＝リスト内で一番早い回）。 */}
                 {res.seriesId && myRes.filter(x => x.seriesId === res.seriesId).length > 1 && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--sub)' }}>
-                    🔁 {t('定期予約')}
+                    {/* 新規予約確定時のLINE・メール通知（sendConfirmToCustomer/sendConfirmEmailToCustomer）には
+                        既に「🔁 定期予約（n/total回目）」と何回目かまで出ているのに、このマイ予約画面だけ
+                        「🔁 定期予約」とだけ表示して何回目かが分からなかった（Meta CEO視点レビュー・
+                        審判団ラウンド44での指摘）。作成時のn/total（seriesIndex/seriesTotal）自体は台帳に
+                        保存されないため通知と全く同じ数字は再現できないが、ここではmyRes内（今後の予約・
+                        未キャンセルのみ）で同じseriesIdを持つ件数の中での順番を代わりに示す。*/}
+                    🔁 {(() => {
+                      const seriesMembers = myRes.filter(x => x.seriesId === res.seriesId)
+                      const seriesIdx = seriesMembers.findIndex(x => x.id === res.id) + 1
+                      const seriesTotal = seriesMembers.length
+                      return lang === 'en' ? `Recurring booking (${seriesIdx} of ${seriesTotal})` : `定期予約（${seriesIdx}/${seriesTotal}回目）`
+                    })()}
                     {myRes.findIndex(x => x.seriesId === res.seriesId) === myRes.indexOf(res) && res.status !== 'キャンセル' && (
                       <button className="btn-s" style={{ marginLeft: 8, padding: '4px 10px', fontSize: 12 }}
                         disabled={seriesCancelingId === res.seriesId} onClick={() => { setSeriesCancelConfirmId(res.seriesId); setSeriesCancelErr('') }}>
@@ -2563,8 +2680,12 @@ export default function Home() {
                     )}
                     {res.estimateNote && <div style={{ fontSize: 13, color: 'var(--sub)', marginBottom: 8 }}>{res.estimateNote}</div>}
                     {/* 辞退＝予約自体のキャンセルだと誤解されるリスクがテスト全部隊レビュー・2026-08-11で
-                        複数視点から指摘された。承諾・辞退どちらでも予約自体は変わらない旨を明記する。 */}
-                    <div style={{ fontSize: 11, color: 'var(--hint)', marginBottom: 8 }}>{t('※ 承諾・辞退いずれの場合も、ご来店予約自体はキャンセルになりません。')}</div>
+                        複数視点から指摘された。承諾・辞退どちらでも予約自体は変わらない旨を明記する。
+                        estimateFlowは既定でrepair（車修理工場）向けだが、fset側で他業態も個別にONにできる
+                        機能のため、visitNoun（来院・来館等）をカスタマイズした業態がONにすると「ご来店予約」
+                        という文言だけ取り残される（業種経営者陣視点レビュー・第44回：clinicプリセットの
+                        フルウォークスルーで発覚）。他の日時ラベルと同じくvisitText()経由にする。 */}
+                    <div style={{ fontSize: 11, color: 'var(--hint)', marginBottom: 8 }}>{visitText('※ 承諾・辞退いずれの場合も、ご来店予約自体はキャンセルになりません。')}</div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button className="btn-p" style={{ padding: '9px 14px', fontSize: 13 }} disabled={estimateRespondingId === res.id} onClick={() => setEstimateConfirm({ id: res.id, accept: true })}>
                         {estimateRespondingId === res.id ? t('送信中...') : t('承諾する')}
@@ -2575,7 +2696,7 @@ export default function Home() {
                     </div>
                     {estimateConfirm?.id === res.id && (
                       <div className="cnl-confirm" style={{ marginTop: 8 }} role="alertdialog" aria-live="assertive" aria-labelledby={`cnl-msg-estimate-${res.id}`}>
-                        <p className="cnl-msg" id={`cnl-msg-estimate-${res.id}`}>{estimateConfirm.accept ? t('この見積を承諾します。よろしいですか？') : t('この見積を辞退します。よろしいですか？（ご来店予約自体は継続します）')}</p>
+                        <p className="cnl-msg" id={`cnl-msg-estimate-${res.id}`}>{estimateConfirm.accept ? t('この見積を承諾します。よろしいですか？') : visitText('この見積を辞退します。よろしいですか？（ご来店予約自体は継続します）')}</p>
                         <div className="cnl-btns">
                           <button className="cnl-yes" ref={el => { cnlYesRefs.current[`estimate-${res.id}`] = el }} disabled={estimateRespondingId === res.id}
                             onClick={() => { const c = estimateConfirm; setEstimateConfirm(null); respondEstimate(c.id, c.accept) }}>
@@ -2855,7 +2976,7 @@ export default function Home() {
                             <div style={{ marginBottom:4 }}>{t('どのように通知しますか？')}</div>
                             <label style={{ display:'flex', alignItems:'center', gap:6, marginBottom:2, cursor:'pointer' }}>
                               <input type="radio" checked={wlNotifyCondition === 'strict'} onChange={() => setWlNotifyCondition('strict')} />
-                              <span>{t('ちょうどこの時間・担当者が空いたときだけ通知する')}</span>
+                              <span>{waitlistStrictLabel()}</span>
                             </label>
                             <label style={{ display:'flex', alignItems:'center', gap:6, cursor:'pointer' }}>
                               <input type="radio" checked={wlNotifyCondition === 'anyTime'} onChange={() => setWlNotifyCondition('anyTime')} />
