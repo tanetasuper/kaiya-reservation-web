@@ -536,7 +536,12 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
     // 見積は1予約につき1件分のみ保持する設計（履歴は残さない）。既に未回答の見積がある状態で
     // 新しい見積を送ると、古い見積は上書きされてお客様には二度と見えなくなる（操作ログには残る）ため、
     // 誤って上書きしないよう確認文言を分ける（テスト部隊監査・2026-08-10での指摘）。
-    const confirmMsg = estimateStatus === '提示済み'
+    // estimateStatus==='完了'（作業完了まで進んだ後）の再送も、単なる「初回送信」と同じ軽い文言だと、
+    // 完了済みジョブに対する重大な上書き操作であることが伝わらない（Apple CEO視点レビュー・ラウンド37
+    // での指摘）。'提示済み'とは別に、より強い警告文言にする。
+    const confirmMsg = estimateStatus === '完了'
+      ? `この予約は既に作業完了（お引き取り案内済み）となっています。¥${amt.toLocaleString()}の新しい見積を送ると状態が「提示済み」に戻り、完了の記録が上書きされます。本当に送信しますか？`
+      : estimateStatus === '提示済み'
       ? `既にお客様が未回答の見積（¥${(parseFloat(res.estimateAmount)||0).toLocaleString()}）があります。¥${amt.toLocaleString()}の新しい見積で上書きして送信します。よろしいですか？`
       : `¥${amt.toLocaleString()}の見積をお客様へ送信します。よろしいですか？`
     if (!window.confirm(confirmMsg)) return
@@ -638,7 +643,11 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
             <div style={{ gridColumn:'1 / -1', background:'var(--bg-subtle)', border:'1px solid var(--border)', borderRadius:8, padding:10, marginTop:2 }}>
               <Field label="👥 全員が同時に必要な追加担当者" span>
                 <div style={{ display:'flex', flexWrap:'wrap', gap:10 }}>
-                  {staffRoster.filter(s => s.name !== data.requestedStaff).map(s => (
+                  {/* 「柔軟な候補プール」側は既に!data.additionalStaff.includes(s.name)で「全員必須」側を
+                      除外しているのに、この「全員必須」側には逆方向の除外が無く、同一人物を両方に
+                      チェックできてしまっていた（Apple CEO視点レビュー・ラウンド37での指摘：ヘルプ文言
+                      「全員が同時に必要な場合は～」が示す二者択一の意図と矛盾する）。相互排他にする。 */}
+                  {staffRoster.filter(s => s.name !== data.requestedStaff && !data.additionalStaffPool.includes(s.name)).map(s => (
                     <label key={s.name} style={{ display:'flex', alignItems:'center', gap:5, fontSize:13, cursor:'pointer' }}>
                       <input type="checkbox" checked={data.additionalStaff.includes(s.name)}
                         onChange={e => setData(d => ({ ...d, additionalStaff: e.target.checked
@@ -731,15 +740,26 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
                   承諾済みになった後は「作業完了を通知」がその時点での主要操作になるため、この
                   ボタンは同じ緑のまま並べると優先度が読み取れない（Apple CEO・Appleデザインチーム
                   両視点レビュー・2026-08-13の指摘）。承諾済み以降はセカンダリ配色に格下げする。 */}
+              {/* estimateStatus==='完了'まで進んだ後は、このボタンだけ緑（主要操作）に戻ってしまい、
+                  承諾後にセカンダリ配色へ格下げした意図（上のコメント参照）が完了状態では効かなくなって
+                  いた（Apple CEO視点レビュー・ラウンド37での指摘）。'承諾済み'と'完了'の両方でグレーにする。 */}
               <button disabled={estimateSending || !estimateAmount} onClick={sendEstimate}
-                style={{ ...(estimateStatus === '承諾済み' ? btnGray : btnGreen), marginTop:8 }}>
-                {estimateSending ? '送信中…' : (estimateStatus === '承諾済み' ? '見積を再送する' : '見積を送る（お客様に通知されます）')}
+                style={{ ...((estimateStatus === '承諾済み' || estimateStatus === '完了') ? btnGray : btnGreen), marginTop:8 }}>
+                {estimateSending ? '送信中…' : ((estimateStatus === '承諾済み' || estimateStatus === '完了') ? '見積を再送する' : '見積を送る（お客様に通知されます）')}
               </button>
               {/* 承諾後の工程（実作業→精算）への接続（業種経営者陣視点レビュー・2026-08-13の指摘）。 */}
               {estimateStatus === '承諾済み' && (
                 <button disabled={estimateWorkDoneSending} onClick={markEstimateWorkDone} style={{ ...btnGreen, marginTop:8, marginLeft:8 }}>
                   {estimateWorkDoneSending ? '送信中…' : '作業完了を通知（お引き取り案内）'}
                 </button>
+              )}
+              {/* お客様画面（index.js）には見積「完了」専用の強調表示があるのに、管理画面側にはプレーンな
+                  テキスト1行（上部の「現在の状態：完了」）しか無く、スタッフが完了済み案件を一覧上で
+                  一目で判別しづらかった（Apple CEO視点レビュー・ラウンド37での指摘）。 */}
+              {estimateStatus === '完了' && (
+                <div style={{ marginTop:8, background:'var(--info-bg)', border:'1px solid var(--info-border)', borderRadius:8, padding:10, fontSize:13, fontWeight:'bold', color:'var(--info-text)' }}>
+                  🔧 作業完了・お引き取り案内済みです
+                </div>
               )}
             </>
           ) : (
@@ -893,7 +913,11 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots, dailyHo
             <div style={{ gridColumn:'1 / -1', background:'var(--bg-subtle)', border:'1px solid var(--border)', borderRadius:8, padding:10, marginTop:2 }}>
               <Field label="👥 全員が同時に必要な追加担当者" span>
                 <div style={{ display:'flex', flexWrap:'wrap', gap:10 }}>
-                  {staffRoster.filter(s => s.name !== data.requestedStaff).map(s => (
+                  {/* 「柔軟な候補プール」側は既に!data.additionalStaff.includes(s.name)で「全員必須」側を
+                      除外しているのに、この「全員必須」側には逆方向の除外が無く、同一人物を両方に
+                      チェックできてしまっていた（Apple CEO視点レビュー・ラウンド37での指摘：ヘルプ文言
+                      「全員が同時に必要な場合は～」が示す二者択一の意図と矛盾する）。相互排他にする。 */}
+                  {staffRoster.filter(s => s.name !== data.requestedStaff && !data.additionalStaffPool.includes(s.name)).map(s => (
                     <label key={s.name} style={{ display:'flex', alignItems:'center', gap:5, fontSize:13, cursor:'pointer' }}>
                       <input type="checkbox" checked={data.additionalStaff.includes(s.name)}
                         onChange={e => setData(d => ({ ...d, additionalStaff: e.target.checked
@@ -1169,7 +1193,12 @@ export default function Admin() {
   const [seatInput,     setSeatInput]     = useState({ seats:4, reason:'' })
   const [seatSaving,    setSeatSaving]    = useState(false)
   const [showHoursForm, setShowHoursForm] = useState(false)
-  const [hoursInput,    setHoursInput]    = useState({ lunchEnabled:false, lunchStart:'11:30', lunchEnd:'14:00', dinnerEnabled:true, dinnerStart:'17:00', dinnerEnd:'21:00' })
+  // Code.gsのdefaultDailyHours()/adminSetDateOverrideの既定値は'13:00'（ラウンド36でdefDailyHoursは
+  // 統一済みだったが、この「営業時間変更（この日だけ）」フォーム専用のstateだけ更新が漏れていた。
+  // lunchEnabled=falseの間は入力欄自体が非表示のためユーザーは編集していないのに、保存時にこの値が
+  // そのまま送信され、意図しない'14:00'がサーバーの既定値'13:00'と食い違う形で保存される
+  // ——TIME_RANGES事故と同型の潜在地雷だった。Microsoft CEO視点レビュー・ラウンド37での指摘）。
+  const [hoursInput,    setHoursInput]    = useState({ lunchEnabled:false, lunchStart:'11:30', lunchEnd:'13:00', dinnerEnabled:true, dinnerStart:'17:00', dinnerEnd:'21:00' })
   const [hoursSaving,   setHoursSaving]   = useState(false)
 
   // ── Block tab ────
@@ -1569,8 +1598,8 @@ export default function Admin() {
 
   useEffect(() => {
     const ov = selectedDate ? dateOverrides.find(o => o.date === selectedDate) || null : null
-    if (ov) setHoursInput({ lunchEnabled: !!ov.lunchEnabled, lunchStart: ov.lunchStart||'11:30', lunchEnd: ov.lunchEnd||'14:00', dinnerEnabled: !!ov.dinnerEnabled, dinnerStart: ov.dinnerStart||'17:00', dinnerEnd: ov.dinnerEnd||'21:00' })
-    else { setHoursInput({ lunchEnabled:false, lunchStart:'11:30', lunchEnd:'14:00', dinnerEnabled:true, dinnerStart:'17:00', dinnerEnd:'21:00' }); setShowHoursForm(false) }
+    if (ov) setHoursInput({ lunchEnabled: !!ov.lunchEnabled, lunchStart: ov.lunchStart||'11:30', lunchEnd: ov.lunchEnd||'13:00', dinnerEnabled: !!ov.dinnerEnabled, dinnerStart: ov.dinnerStart||'17:00', dinnerEnd: ov.dinnerEnd||'21:00' })
+    else { setHoursInput({ lunchEnabled:false, lunchStart:'11:30', lunchEnd:'13:00', dinnerEnabled:true, dinnerStart:'17:00', dinnerEnd:'21:00' }); setShowHoursForm(false) }
   }, [selectedDate, dateOverrides])
 
   // ── Data loaders ────────────────────────────────────────────────

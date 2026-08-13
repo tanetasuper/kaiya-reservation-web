@@ -2800,9 +2800,13 @@ export default function Home() {
           --hint: #aaa;
           --border: #e0e0e0;
           --red: #e53935;
-          --info-bg: #eef7ff;
-          --info-border: #bcdcfb;
-          --info-text: #2c5a80;
+          /* 管理画面（admin.js）と同じ意味（見積完了の告知・LINEなしでのご予約案内等）で使うトークンなのに
+             値が異なっていた（客画面は薄い青、管理画面はMaterial系の明るい青）。管理画面側の値に統一する
+             （Appleデザインチーム視点レビュー・ラウンド37での指摘：admin.jsの使用箇所が多いため、そちらを
+             正として揃える）。 */
+          --info-bg: #e3f2fd;
+          --info-border: #bcdcff;
+          --info-text: #1565c0;
           --warn-bg: #fff8e6;
           --warn-border: #f5d78e;
           --warn-text: #8a6d1f;
@@ -2842,9 +2846,9 @@ export default function Home() {
             --border: #333;
             --red: #ff6b6b;
             --sat-blue: #6fa8dc;
-            --info-bg: #16232d;
-            --info-border: #2c5a80;
-            --info-text: #8ec4ee;
+            --info-bg: #16283a;
+            --info-border: #2c4a6b;
+            --info-text: #6ab3f0;
             --warn-bg: #2b2410;
             --warn-border: #8a6d1f;
             --warn-text: #f0d27a;
