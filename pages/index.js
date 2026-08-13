@@ -541,12 +541,21 @@ export default function Home() {
   // 見積/承認フロー（データモデル大改修の一部、2026-08-10）
   const [estimateRespondingId, setEstimateRespondingId] = useState(null)
   const [estimateRespondErr, setEstimateRespondErr] = useState('')
+  // estimateRespondErrは全予約カードで共有のstateのため、複数の予約が同時に見積応答待ちの場合
+  // （車修理工場等、複数台が同時に見積待ちになりうる業態で現実的）、片方の失敗が無関係な別の
+  // カードにも表示されてしまっていた（ランダム客層視点レビュー・ラウンド39での指摘）。
+  // エラーがどの予約に対するものかを併せて記録し、該当カードだけに表示する。
+  const [estimateRespondErrId, setEstimateRespondErrId] = useState(null)
   // 承諾・辞退とも、単発キャンセルと同じ「本当に良いか」の一段階確認を挟む（テスト全部隊レビュー・
   // 2026-08-11で、確認無しの即時実行だと誤操作リスクが高いと複数視点から指摘されたための対応）。
   const [estimateConfirm, setEstimateConfirm] = useState(null) // { id, accept } | null
   // 定期予約（シリーズ予約）：まとめてキャンセル
   const [seriesCancelingId, setSeriesCancelingId] = useState(null)
   const [seriesCancelErr, setSeriesCancelErr] = useState('')
+  // seriesCancelErrと同じ理由（ランダム客層視点レビュー・ラウンド39での指摘）：複数の定期予約シリーズ、
+  // あるいは定期予約と無関係な単発予約が同じマイ予約一覧に並ぶ場合、片方のシリーズキャンセル失敗が
+  // 無関係な予約カードにも表示されてしまっていた。
+  const [seriesCancelErrId, setSeriesCancelErrId] = useState(null)
   // シリーズ一括キャンセルは単発キャンセルより影響範囲が大きい（最大8件）のに確認ダイアログが
   // 無かった（テスト全部隊レビュー・2026-08-11で複数視点から指摘）。単発と同じ二段階確認にする。
   const [seriesCancelConfirmId, setSeriesCancelConfirmId] = useState(null)
@@ -809,6 +818,14 @@ export default function Home() {
       // 応答が戻った時点で、既にこれより新しいリクエストが発行済みなら（=このリクエストは古い）、
       // 結果を無視する（新しい選択の表示を古い応答で上書きしないため）。
       if (reqId !== availReqIdRef.current) return
+      // 満席カードの種別（通常満席 vs 貸切満席）がこの応答で変わる場合、日付・時間・担当者・人数・
+      // コース変更時のonChangeリセットが拾えない経路（例：残席確認失敗時の「再試行」ボタン）でも、
+      // 直前まで別種のカードで登録済みだったwlDone/wlErrが残ってしまい、切り替わった先のカードで
+      // まだ登録していないのに「✅登録しました」と誤表示され、実際の登録フォームも隠れてしまう
+      // （ランダム客層視点レビュー・ラウンド39での指摘）。
+      if (!!(avail && avail.hasKasshiki) !== !!r.hasKasshiki) {
+        setWlDone(false); setWlErr('')
+      }
       setAvail(r)
     } catch {
       if (reqId !== availReqIdRef.current) return
@@ -1318,15 +1335,18 @@ export default function Home() {
   async function respondEstimate(id, accept) {
     setEstimateRespondingId(id)
     setEstimateRespondErr('')
+    setEstimateRespondErrId(null)
     try {
       const r = await api.respondToEstimate({ reservationId: id, lineUserId: profile?.userId || '', idToken, phone: myResPhoneUsed, name: myResNameUsed, accept })
       if (r.success) {
         setMyRes((prev) => prev.map((x) => (x.id === id ? { ...x, estimateStatus: accept ? '承諾済み' : '辞退済み' } : x)))
       } else {
         setEstimateRespondErr(r.error || t('操作に失敗しました。お手数ですがお電話にてご連絡ください。'))
+        setEstimateRespondErrId(id)
       }
     } catch {
       setEstimateRespondErr(t('通信エラーが発生しました。もう一度お試しください。'))
+      setEstimateRespondErrId(id)
     }
     setEstimateRespondingId(null)
   }
@@ -1336,15 +1356,18 @@ export default function Home() {
   async function cancelSeriesAll(seriesId) {
     setSeriesCancelingId(seriesId)
     setSeriesCancelErr('')
+    setSeriesCancelErrId(null)
     try {
       const r = await api.cancelSeries({ seriesId, lineUserId: profile?.userId || '', idToken, phone: myResPhoneUsed, name: myResNameUsed })
       if (r.success) {
         setMyRes((prev) => prev.map((x) => (x.seriesId === seriesId && x.date >= toYMD(new Date()).replace(/-/g, '/') ? { ...x, status: 'キャンセル' } : x)))
       } else {
         setSeriesCancelErr(r.error || t('キャンセルに失敗しました。お手数ですがお電話にてご連絡ください。'))
+        setSeriesCancelErrId(seriesId)
       }
     } catch {
       setSeriesCancelErr(t('通信エラーが発生しました。もう一度お試しいただき、失敗する場合はお電話にてご連絡ください。'))
+      setSeriesCancelErrId(seriesId)
     }
     setSeriesCancelingId(null)
   }
@@ -2362,6 +2385,15 @@ export default function Home() {
                   {res.requestedStaff ? <><br />🔖 {t('ご指名')}：{res.requestedStaff}{res.additionalStaff && res.additionalStaff.length > 0 ? `（＋${res.additionalStaff.join('、')}）` : ''}</> : null}
                   {res.notes ? <><br />💬 {res.notes}</> : null}
                 </div>
+                {/* 予約時のLINE・メール通知には「🔒 貸切プラン」表示があるのに、確定後（status==='要確認'
+                    でなくなった後）はこのカードから貸切であることを示す手がかりが一切無くなっていた
+                    （Meta CEO視点レビュー・ラウンド39での指摘：最低保証額が発生する買い切り予約なのに、
+                    確定後は普通の予約と見分けがつかない）。status に関わらず常に表示する。 */}
+                {res.isKasshiki && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--sub)', fontWeight: 'bold' }}>
+                    🔒 {t('貸切プラン')}
+                  </div>
+                )}
                 {res.status === '要確認' && (
                   <div style={{ marginTop: 6, background: 'var(--warn-bg)', border: '1px solid var(--warn-border)', borderRadius: 8, padding: '6px 10px', fontSize: 12, color: 'var(--warn-text)', fontWeight: 'bold', display: 'inline-block' }}>
                     ⏳ {t('まだ確定していません（貸切・大人数のご相談中）')}
@@ -2393,7 +2425,7 @@ export default function Home() {
                     )}
                   </div>
                 )}
-                {seriesCancelErr && <div className="err" style={{ marginTop: 4 }}>{seriesCancelErr}</div>}
+                {seriesCancelErr && seriesCancelErrId === res.seriesId && <div className="err" style={{ marginTop: 4 }}>{seriesCancelErr}</div>}
                 {/* 見積/承認フロー：予約自体のステータスとは独立（辞退しても予約自体は残る）。
                     「提示済み」の間だけ承諾・辞退の操作を出す。 */}
                 {res.estimateStatus === '提示済み' && (
@@ -2430,7 +2462,7 @@ export default function Home() {
                         </div>
                       </div>
                     )}
-                    {estimateRespondErr && <div className="err" style={{ marginTop: 6 }}>{estimateRespondErr}</div>}
+                    {estimateRespondErr && estimateRespondErrId === res.id && <div className="err" style={{ marginTop: 6 }}>{estimateRespondErr}</div>}
                   </div>
                 )}
                 {(res.estimateStatus === '承諾済み' || res.estimateStatus === '辞退済み') && (
