@@ -222,7 +222,7 @@ function TimeGrid({ value, onChange, slots }) {
   return (
     <div className="t-grid">
       {list.map((s) => (
-        <button key={s} className={`t-btn${value === s ? ' sel' : ''}`} onClick={() => onChange(s)}>
+        <button key={s} className={`t-btn${value === s ? ' sel' : ''}`} aria-pressed={value === s} onClick={() => onChange(s)}>
           {s}
         </button>
       ))}
@@ -399,8 +399,10 @@ export default function Home() {
   // 汎用的な空配列を既定にする（2026-08-08、実機テストを受けての一般化対応）。
   const [settingsCourses, setSettingsCourses] = useState([])
   const [selCourse, setSelCourse] = useState(0)
+  // ランチ終了時刻の既定値をdailyHours方式（'13:00'、サーバー側defaultDailyHours()）と統一
+  // （Microsoft CEO視点レビュー・ラウンド38での指摘、admin.jsのdefTimeRangesと同じ修正）。
   const [settingsTimeRanges, setSettingsTimeRanges] = useState([
-    { type:'lunch', label:'ランチ', start:'11:30', end:'14:00' },
+    { type:'lunch', label:'ランチ', start:'11:30', end:'13:00' },
     { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' },
   ])
   const [settingsDailyHours, setSettingsDailyHours] = useState({})
@@ -824,7 +826,7 @@ export default function Home() {
     setLateReqErr('')
     try {
       const r = await api.requestLateChangeOrCancel({
-        reservationId: res.id, lineUserId: profile?.userId || '', phone: myResPhoneUsed, name: myResNameUsed,
+        reservationId: res.id, lineUserId: profile?.userId || '', idToken, phone: myResPhoneUsed, name: myResNameUsed,
         type: lateReqType, message: lateReqMsg.trim(),
       })
       if (r.success) {
@@ -854,7 +856,11 @@ export default function Home() {
   // 以前はtargetDateが渡された（＝変更フロー由来の呼び出し全て）場合にtimeを常にundefinedで
   // 送信していたため、お客様が「ちょうどこの時間・担当者」（strict）を選んでも、実際に送信される
   // 時間が常に空になり選択が黙って無効化されていた（ランダム客層視点レビュー・ラウンド37での指摘）。
-  async function joinWaitlist(targetDate, targetGuests, targetTime) {
+  // forceAnyTime：貸切（買い切り）満席カードからの呼び出し専用。このカードは丸ごと1日をブロックする
+  // 予約のため「厳密にこの時間・担当者が空いたら」という粒度自体が意味を持たず、通知条件ラジオ自体を
+  // 表示していない。にもかかわらず、直前まで別の（通常満席）カードで選んでいたwlNotifyCondition/選択中の
+  // 時間・担当者がそのまま素通りしてしまう実バグがあった（ランダム客層視点レビュー・ラウンド38での指摘）。
+  async function joinWaitlist(targetDate, targetGuests, targetTime, forceAnyTime) {
     if (!name.trim() || !phone.trim()) { setWlErr(t('お名前と電話番号を入力してください')); return }
     if (!isValidPhoneFormat(phone)) { setWlErr(t('電話番号の形式が正しくありません')); return }
     setWlSubmitting(true)
@@ -864,7 +870,7 @@ export default function Home() {
       // いつでも通知）で送る。時間帯・担当者制（timeSlot/perStaff）だけ、お客様が選んだ通知条件と
       // 現在選択中の時間・担当者を一緒に送る（業種経営者陣視点レビュー・ラウンド30での指摘、
       // ユーザー承認済み）。
-      const notifyCondition = capacityModel === 'daily' ? 'anyTime' : wlNotifyCondition
+      const notifyCondition = (capacityModel === 'daily' || forceAnyTime) ? 'anyTime' : wlNotifyCondition
       const r = await api.joinWaitlist({
         lineUserId: profile?.userId || '', idToken,
         name: name.trim(), phone: phone.trim(),
@@ -874,11 +880,13 @@ export default function Home() {
         // 変更フローからの登録なのに別フローの人数が紛れ込む（ランダム客層視点レビューでの指摘）。
         date: targetDate !== undefined ? targetDate : selDate,
         guests: targetGuests !== undefined ? targetGuests : (effectiveGuests || ''),
-        time: targetDate !== undefined ? targetTime : selTime,
+        // forceAnyTime（貸切満席カード）は日単位ブロックのため、時間・担当者は最初から送らない
+        // （上記コメント参照）。
+        time: forceAnyTime ? undefined : (targetDate !== undefined ? targetTime : selTime),
         // 変更フロー画面には担当者選択UI自体が無いため（新規予約フローの指名ボタンに相当するものが
         // 存在しない）、targetDateが渡された場合はstaffを送らない。これは既存の挙動と同じで、今回の
         // 修正では「時間」だけを変更フローからも正しく送るようにする（担当者の扱いは別途検討候補）。
-        staff: (targetDate !== undefined || !staffAssignmentEnabled) ? undefined : selStaff,
+        staff: (forceAnyTime || targetDate !== undefined || !staffAssignmentEnabled) ? undefined : selStaff,
         notifyCondition, language: lang,
       })
       if (r.success) setWlDone(true)
@@ -1584,6 +1592,10 @@ export default function Home() {
                   // 一瞬でも見せてしまわないようクリアする（時間を選び直すまで表示しない）
                   setAvail(null)
                   setAvailErr('')
+                  // 時間・担当者・人数変更時と同じ理由（コースが変わると提供時間帯自体が変わるため、
+                  // 満席カードで既に登録済みの✅表示が別コースにも持ち越されてしまう。ランダム客層視点
+                  // レビュー・ラウンド38での指摘）。
+                  setWlDone(false); setWlErr('')
                 }
                 return (
                 <div key={i}
@@ -1713,6 +1725,10 @@ export default function Home() {
                           setIsKonsult(false)
                           setShowKasshikiWarning(false)
                           setInputErr('')
+                          // 時間・担当者変更時と同じ理由（人数を変えると満席カードの対象自体が変わるのに、
+                          // 既に登録済みの✅表示だけが残ってしまう。ランダム客層視点レビュー・ラウンド38
+                          // での指摘：時間・担当者変更時のリセットだけ追加され、人数変更時が漏れていた）。
+                          setWlDone(false); setWlErr('')
                         }}
                       >
                         {/* 単位が「名」固定でcountUnit設定（台・件等）を反映していなかった（残席表示・
@@ -1859,7 +1875,7 @@ export default function Home() {
                         )}
                         <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
                           {featureFlags.waitlistEnabled && (
-                            <button onClick={() => joinWaitlist()} disabled={wlSubmitting || !privacyConsent}
+                            <button onClick={() => joinWaitlist(undefined, undefined, undefined, true)} disabled={wlSubmitting || !privacyConsent}
                               style={{ background:'#ff9800', color:'#fff', border:'none', borderRadius:6, padding:'9px 16px', fontSize:13, fontWeight:'bold', cursor:'pointer' }}>
                               {wlSubmitting ? t('登録中...') : t('キャンセル待ちに登録する')}
                             </button>
@@ -2340,6 +2356,10 @@ export default function Home() {
                 <div className="res-detail">
                   ⏰ {fmtTime(res.time)}〜{fmtTime(res.endTime)}　👥 {guestsDisplay(res.guests)}
                   <br />{itemIcon} {res.course}
+                  {/* 確認・変更完了等の通知（LINE・メール）には既に指名担当者の情報が出ているのに、
+                      この画面（マイ予約）だけ表示されていなかった（Meta CEO視点レビュー・ラウンド38
+                      での指摘）。通知と同じ表記に揃える。 */}
+                  {res.requestedStaff ? <><br />🔖 {t('ご指名')}：{res.requestedStaff}{res.additionalStaff && res.additionalStaff.length > 0 ? `（＋${res.additionalStaff.join('、')}）` : ''}</> : null}
                   {res.notes ? <><br />💬 {res.notes}</> : null}
                 </div>
                 {res.status === '要確認' && (
@@ -2436,6 +2456,14 @@ export default function Home() {
                       ? t(res.estimateWorkDoneMessage)
                       : (res.estimateWorkDoneMessage || t('ご依頼の作業が完了しました。ご都合の良い時にお引き取りにお越しください。'))}
                     <div style={{ fontWeight: 'normal', marginTop: 4 }}>💰 {t('お見積り')}：¥{(parseFloat(res.estimateAmount) || 0).toLocaleString()}</div>
+                    {/* 「提示済み」カードには既にある部品代・工賃の内訳が、この「完了」カードだけ
+                        欠けていた（Meta CEO視点レビュー・ラウンド38での指摘：LINE/メール通知の作業完了
+                        案内には既に内訳が再掲されているのに、画面側だけ総額のみだった）。 */}
+                    {res.estimatePartsAmount && res.estimateLaborAmount && (
+                      <div style={{ fontWeight: 'normal', fontSize: 12, marginTop: 2 }}>
+                        {t('部品代')}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{t('工賃')}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
+                      </div>
+                    )}
                   </div>
                 )}
                 {res.status === 'キャンセル' ? (
@@ -2594,7 +2622,7 @@ export default function Home() {
                       <button key={n}
                         className={`g-btn${chgGuests === String(n) ? ' sel' : ''}${disabled ? ' dis' : ''}`}
                         disabled={disabled}
-                        onClick={() => { if (!disabled) { setChgGuests(String(n)); setChgErr('') } }}>
+                        onClick={() => { if (!disabled) { setChgGuests(String(n)); setChgErr(''); setWlDone(false); setWlErr('') } }}>
                         {/* 単位が「名」固定でcountUnit設定（台・件等）を反映していなかった（残席表示・
                             単価表示は既にcountUnitを使っているのに、この人数選択ボタンだけ取り残されて
                             いた）。英語表記は、店舗が単位をカスタマイズしていない大多数の店舗ではこれまで
@@ -2703,7 +2731,7 @@ export default function Home() {
                         )}
                         <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
                           {featureFlags.waitlistEnabled && (
-                            <button onClick={() => joinWaitlist(chgDate, effectiveChgGuests, chgTime)} disabled={wlSubmitting || !privacyConsent}
+                            <button onClick={() => joinWaitlist(chgDate, effectiveChgGuests, chgTime, true)} disabled={wlSubmitting || !privacyConsent}
                               style={{ background:'#ff9800', color:'#fff', border:'none', borderRadius:6, padding:'9px 16px', fontSize:13, fontWeight:'bold', cursor:'pointer' }}>
                               {wlSubmitting ? t('登録中...') : t('キャンセル待ちに登録する')}
                             </button>

@@ -179,7 +179,10 @@ export default function Setup() {
                 ここ（warning）で違っていた不統一も合わせて解消する（Apple CEO視点レビュー・2026-08-11の指摘）。 */}
             {needsStaff && (
               <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)', borderRadius: 8, padding: '10px 14px', fontSize: 12, marginBottom: 16 }}>
-                ⚠️ 「{preset.label}」は担当者単位の容量管理です。初期設定完了後、必ず管理画面の「設定」タブから担当者を最低1名登録してください（登録するまで、お客様の予約が全て「対応不可」になります）。
+                {/* 「担当者」という一般語だけ固定で、選んだ業態の実際の呼び方（整備士・医師・講師等、
+                    preset.settings.staffLabel）に追従していなかった（業種経営者陣視点レビュー・
+                    ラウンド38での指摘：この警告を読む店主が自分の業態に翻訳し直す必要があった）。 */}
+                ⚠️ 「{preset.label}」は{preset.settings.staffLabel || '担当者'}単位の容量管理です。初期設定完了後、必ず管理画面の「設定」タブから{preset.settings.staffLabel || '担当者'}を最低1名登録してください（登録するまで、お客様の予約が全て「対応不可」になります）。
               </div>
             )}
 
@@ -195,6 +198,10 @@ export default function Setup() {
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle}>予約管理用Googleカレンダーのメールアドレス *</label>
               <input value={form.calendarId} onChange={set('calendarId')} placeholder="例：shop-name@gmail.com" style={inputStyle} />
+              {/* 直前の店舗短縮名フィールドには説明があるのに、この項目だけ何のための入力か・
+                  どこで確認できるかの案内が無かった（業種経営者陣視点レビュー・ラウンド38での指摘：
+                  非技術者の店主が初めて設定する際に最も迷いやすい項目の一つ）。 */}
+              <div style={hintStyle}>予約を反映させたいGoogleカレンダーのアドレスです。カレンダーの設定画面（歯車アイコン→「カレンダーの設定」→対象カレンダーを選択）の「カレンダーの統合」欄にある「カレンダーID」をそのまま貼り付けてください（Googleアカウントのメールアドレスと同じ場合もあります）。</div>
             </div>
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle}>管理画面パスワード *</label>
@@ -252,7 +259,7 @@ export default function Setup() {
             )}
             {needsStaff && (
               <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
-                ⚠️ 管理画面にログインしたら、担当者を最低1名登録してください（登録するまでお客様の予約が全て「対応不可」になります）。
+                ⚠️ 管理画面にログインしたら、{preset.settings.staffLabel || '担当者'}を最低1名登録してください（登録するまでお客様の予約が全て「対応不可」になります）。
               </div>
             )}
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8, marginBottom: 16 }}>

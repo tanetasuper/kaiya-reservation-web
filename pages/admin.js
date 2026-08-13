@@ -1268,7 +1268,11 @@ export default function Admin() {
   // ── Settings tab ────
   const defCutoff = { daysBefore:2, time:'22:00' }
   const defCutoffRules = { '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff, '3':defCutoff, '4':defCutoff, '5':defCutoff, '6':{ daysBefore:2, time:'22:00' }, 'holiday':{ daysBefore:3, time:'22:00' } }
-  const defTimeRanges = [{ type:'lunch', label:'ランチ', start:'11:30', end:'14:00' }, { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' }]
+  // ランチ終了時刻の既定値がdefDailyHours（'13:00'、サーバー側defaultDailyHours()と統一済み）と
+  // ここだけ食い違っていた（'14:00'のまま）。同じ「デフォルトのランチ終了時刻」という概念が
+  // dailyHours方式とtimeRanges方式で別の値になっていたTIME_RANGES事故と同型の潜在地雷
+  // （Microsoft CEO視点レビュー・ラウンド38での指摘）。dailyHoursの値に統一する。
+  const defTimeRanges = [{ type:'lunch', label:'ランチ', start:'11:30', end:'13:00' }, { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' }]
   // Code.gsのdefaultDailyHours()（サーバー側の唯一の権威ある既定値）とここが食い違っていた
   // （lunchEnabled: サーバーは全曜日false、ここは土日だけtrue／lunchEnd: サーバーは'13:00'、
   // ここは'14:00'）。通常はloadSettings()がサーバー値を必ず優先するため実害は無いが、admin.js
@@ -2567,7 +2571,7 @@ export default function Admin() {
                           <span style={{ fontWeight:'bold' }}>{fmtDate(r.date)}</span>
                           <span style={{ marginLeft:8 }}>{formatTime(r.time)}〜</span>
                           <span style={{ marginLeft:8 }}>{r.name} 様</span>
-                          <span style={{ marginLeft:8, color:'var(--text-muted)' }}>{r.phone}</span>
+                          <span style={{ marginLeft:8, color:'var(--text-muted)' }}>📞 {r.phone}</span>
                           {r.guests && <span style={{ marginLeft:8 }}>{r.guests}名</span>}
                         </div>
                         <button onClick={() => {
@@ -2803,7 +2807,7 @@ export default function Admin() {
                             <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:3 }}>
                               {r.course}
                               {r.source && <span style={{ marginLeft:8, color:'var(--text-faint)' }}>{r.source}</span>}
-                              {r.phone  && <span style={{ marginLeft:8 }}>{r.phone}</span>}
+                              {r.phone  && <span style={{ marginLeft:8 }}>📞 {r.phone}</span>}
                               {r.lastVisit && <span style={{ marginLeft:8, color:'var(--text-faint)' }}>前回{settings.visitNoun || '来店'}: {r.lastVisit}</span>}
                             </div>
                             {r.notes && <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:2, whiteSpace:'pre-wrap' }}>メモ: {r.notes}</div>}
@@ -3035,7 +3039,7 @@ export default function Admin() {
                           {n.date && fmtDate(n.date)}
                           {n.time && <span style={{ marginLeft:8 }}>{formatTime(n.time)}〜{formatTime(n.endTime)}</span>}
                           {n.guests && <span style={{ marginLeft:8 }}>{n.guests}名</span>}
-                          {n.phone && <span style={{ marginLeft:8, color:'var(--text-muted)' }}>{n.phone}</span>}
+                          {n.phone && <span style={{ marginLeft:8, color:'var(--text-muted)' }}>📞 {n.phone}</span>}
                         </div>
                         {n.type==='change' && n.oldDate && (
                           <div style={{ fontSize:12, color:'var(--text-muted)' }}>変更前: {fmtDate(n.oldDate)} {formatTime(n.oldTime)}〜</div>
@@ -3118,7 +3122,7 @@ export default function Admin() {
                           {w.time && <span style={{ marginLeft:8 }}>{w.time}〜希望</span>}
                           {w.staff && <span style={{ marginLeft:8 }}>{w.staff}指名</span>}
                           {w.notifyCondition === 'strict' && <span style={{ marginLeft:8, color:'var(--warning-text)' }}>厳密指定</span>}
-                          <span style={{ marginLeft:8, color:'var(--text-muted)' }}>{w.phone}</span>
+                          <span style={{ marginLeft:8, color:'var(--text-muted)' }}>📞 {w.phone}</span>
                           {w.notified && <span style={{ marginLeft:8, color:'var(--success-text)' }}>通知済み</span>}
                         </div>
                         <button onClick={() => removeWaitlistEntry(w.id)} style={{ ...btnGray, fontSize:11, padding:'4px 10px' }}>削除</button>
