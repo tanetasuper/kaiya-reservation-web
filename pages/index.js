@@ -1771,7 +1771,7 @@ export default function Home() {
 
                 {/* 満席日：キャンセル待ち登録（貸切が理由の満席は下の専用の案内を出すので、ここでは対象外にする） */}
                 {featureFlags.waitlistEnabled && avail && !availLoading && !isKasshiki && !avail.hasKasshiki && avail.remainingSeats === 0 && (
-                  <div style={{ background:'var(--warn-bg)', border:'1px solid var(--warn-border)', borderRadius:8, padding:'12px 14px', margin:'10px 0', fontSize:13 }}>
+                  <div style={{ background:'var(--warning-bg)', border:'1px solid var(--warning-border)', borderRadius:8, padding:'12px 14px', margin:'10px 0', fontSize:13 }}>
                     {wlDone ? (
                       <div style={{ color:'var(--green)', fontWeight:'bold' }}>✅ {t('キャンセル待ちに登録しました。空きが出たらお知らせします。')}</div>
                     ) : (
@@ -1808,7 +1808,7 @@ export default function Home() {
                           <span>{t('ご入力いただいた情報の取り扱い（')}<a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={openPrivacyLink} style={{ color:'var(--info-text)', textDecoration:'underline' }}>{t('こちら')}</a>{t('）に同意します')}</span>
                         </label>
                         {!privacyConsent && (
-                          <div style={{ fontSize:11, color:'var(--warn-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
+                          <div style={{ fontSize:11, color:'var(--warning-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
                         )}
                         {/* 貸切満席カード（1501行目）には常に電話番号のリンクがあるのに、この通常の満席カードだけ
                             送信エラー時の逃げ道（電話番号）が無かった（ランダム客層視点レビューでの指摘：
@@ -1892,7 +1892,7 @@ export default function Home() {
                               <span>{t('ご入力いただいた情報の取り扱い（')}<a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={openPrivacyLink} style={{ color:'var(--info-text)', textDecoration:'underline' }}>{t('こちら')}</a>{t('）に同意します')}</span>
                             </label>
                             {!privacyConsent && (
-                              <div style={{ fontSize:11, color:'var(--warn-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
+                              <div style={{ fontSize:11, color:'var(--warning-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
                             )}
                           </>
                         )}
@@ -2251,7 +2251,7 @@ export default function Home() {
           {/* 同意チェック無しで押せない理由が分からないまま「ボタンが灰色」なだけだと迷わせるため、
               理由を明示する（Appleデザインチーム視点レビューでの指摘） */}
           {!privacyConsent && !submitting && (
-            <div className="mt8" style={{ fontSize: 12, color: 'var(--warn-text)', textAlign: 'center' }}>{t('上記の同意チェックが必要です')}</div>
+            <div className="mt8" style={{ fontSize: 12, color: 'var(--warning-text)', textAlign: 'center' }}>{t('上記の同意チェックが必要です')}</div>
           )}
           <div className="mt16">
             <button className="btn-p" disabled={submitting || !privacyConsent} onClick={submitReservation}>
@@ -2304,7 +2304,7 @@ export default function Home() {
                 </div>
                 <div className="done-ttl">{done.title}</div>
                 {done.pendingApproval && (
-                  <div style={{ background: 'var(--warn-bg)', border: '1px solid var(--warn-border)', borderRadius: 10, padding: '10px 14px', margin: '0 0 12px', fontSize: 13, color: 'var(--warn-text)', fontWeight: 'bold' }}>
+                  <div style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 10, padding: '10px 14px', margin: '0 0 12px', fontSize: 13, color: 'var(--warning-text)', fontWeight: 'bold' }}>
                     {t('※ まだ確定していません。店舗からの確認のご連絡をお待ちください。')}
                   </div>
                 )}
@@ -2391,11 +2391,14 @@ export default function Home() {
                     確定後は普通の予約と見分けがつかない）。status に関わらず常に表示する。 */}
                 {res.isKasshiki && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--sub)', fontWeight: 'bold' }}>
-                    🔒 {t('貸切プラン')}
+                    {/* t()の辞書キーは絵文字を含む'🔒 貸切プラン'のため、絵文字をJSX側で分離すると
+                        exact-match lookupが失敗し英語ユーザーに生の日本語がそのまま表示されていた
+                        （Meta CEO視点レビュー・ラウンド40での指摘）。他の箇所と同じキー形式に統一する。 */}
+                    {t('🔒 貸切プラン')}
                   </div>
                 )}
                 {res.status === '要確認' && (
-                  <div style={{ marginTop: 6, background: 'var(--warn-bg)', border: '1px solid var(--warn-border)', borderRadius: 8, padding: '6px 10px', fontSize: 12, color: 'var(--warn-text)', fontWeight: 'bold', display: 'inline-block' }}>
+                  <div style={{ marginTop: 6, background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 8, padding: '6px 10px', fontSize: 12, color: 'var(--warning-text)', fontWeight: 'bold', display: 'inline-block' }}>
                     ⏳ {t('まだ確定していません（貸切・大人数のご相談中）')}
                   </div>
                 )}
@@ -2522,7 +2525,7 @@ export default function Home() {
                           <span>{t('ご入力いただいた情報の取り扱い（')}<a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={openPrivacyLink} style={{ color:'var(--info-text)', textDecoration:'underline' }}>{t('こちら')}</a>{t('）に同意します')}</span>
                         </label>
                         {!privacyConsent && (
-                          <div style={{ fontSize:11, color:'var(--warn-text)', marginTop:4 }}>{t('上記の同意チェックが必要です')}</div>
+                          <div style={{ fontSize:11, color:'var(--warning-text)', marginTop:4 }}>{t('上記の同意チェックが必要です')}</div>
                         )}
                         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                           <button className="btn-p" style={{ padding: '9px 14px', fontSize: 13 }} disabled={lateReqSubmitting || !privacyConsent} onClick={() => submitLateRequest(res)}>
@@ -2682,7 +2685,7 @@ export default function Home() {
                     新規予約フローと同じUI・同じjoinWaitlistを使うが、対象日・人数は変更フロー側の
                     chgDate/effectiveChgGuestsを渡す。 */}
                 {featureFlags.waitlistEnabled && avail && !availLoading && !avail.hasKasshiki && avail.remainingSeats === 0 && (
-                  <div style={{ background:'var(--warn-bg)', border:'1px solid var(--warn-border)', borderRadius:8, padding:'12px 14px', margin:'10px 0', fontSize:13 }}>
+                  <div style={{ background:'var(--warning-bg)', border:'1px solid var(--warning-border)', borderRadius:8, padding:'12px 14px', margin:'10px 0', fontSize:13 }}>
                     {wlDone ? (
                       <div style={{ color:'var(--green)', fontWeight:'bold' }}>✅ {t('キャンセル待ちに登録しました。空きが出たらお知らせします。')}</div>
                     ) : (
@@ -2715,7 +2718,7 @@ export default function Home() {
                           <span>{t('ご入力いただいた情報の取り扱い（')}<a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={openPrivacyLink} style={{ color:'var(--info-text)', textDecoration:'underline' }}>{t('こちら')}</a>{t('）に同意します')}</span>
                         </label>
                         {!privacyConsent && (
-                          <div style={{ fontSize:11, color:'var(--warn-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
+                          <div style={{ fontSize:11, color:'var(--warning-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
                         )}
                         <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
                           <button onClick={() => joinWaitlist(chgDate, effectiveChgGuests, chgTime)} disabled={wlSubmitting || !privacyConsent}
@@ -2757,7 +2760,7 @@ export default function Home() {
                               <span>{t('ご入力いただいた情報の取り扱い（')}<a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={openPrivacyLink} style={{ color:'var(--info-text)', textDecoration:'underline' }}>{t('こちら')}</a>{t('）に同意します')}</span>
                             </label>
                             {!privacyConsent && (
-                              <div style={{ fontSize:11, color:'var(--warn-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
+                              <div style={{ fontSize:11, color:'var(--warning-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
                             )}
                           </>
                         )}
@@ -2840,7 +2843,7 @@ export default function Home() {
             </span>
           </label>
           {!privacyConsent && !chgSubmitting && (
-            <div className="mt8" style={{ fontSize: 12, color: 'var(--warn-text)', textAlign: 'center' }}>{t('上記の同意チェックが必要です')}</div>
+            <div className="mt8" style={{ fontSize: 12, color: 'var(--warning-text)', textAlign: 'center' }}>{t('上記の同意チェックが必要です')}</div>
           )}
           <div className="mt16">
             <button className="btn-p" disabled={chgSubmitting || !privacyConsent} onClick={submitChange}>
@@ -2881,7 +2884,7 @@ export default function Home() {
           --text: #111;
           --sub: #666;
           --hint: #aaa;
-          --border: #e0e0e0;
+          --border: #ddd;
           --red: #e53935;
           /* 管理画面（admin.js）と同じ意味（見積完了の告知・LINEなしでのご予約案内等）で使うトークンなのに
              値が異なっていた（客画面は薄い青、管理画面はMaterial系の明るい青）。管理画面側の値に統一する
@@ -2890,12 +2893,12 @@ export default function Home() {
           --info-bg: #e3f2fd;
           --info-border: #bcdcff;
           --info-text: #1565c0;
-          --warn-bg: #fff8e6;
-          --warn-border: #f5d78e;
-          --warn-text: #8a6d1f;
+          --warning-bg: #fff3e0;
+          --warning-border: #ffe0b2;
+          --warning-text: #e65100;
           --input-bg: #fafafa;
           --input-focus-bg: #fff;
-          --danger-bg: #fff0f0;
+          --danger-bg: #ffebee;
           --danger-border: #ffcccc;
           --tag-bg: #f0fff4;
           --tag-border: #b2ecc8;
@@ -2926,19 +2929,19 @@ export default function Home() {
             --text: #eee;
             --sub: #aaa;
             --hint: #777;
-            --border: #333;
+            --border: #3a4149;
             --red: #ff6b6b;
             --sat-blue: #6fa8dc;
             --info-bg: #16283a;
             --info-border: #2c4a6b;
             --info-text: #6ab3f0;
-            --warn-bg: #2b2410;
-            --warn-border: #8a6d1f;
-            --warn-text: #f0d27a;
+            --warning-bg: #3a2712;
+            --warning-border: #6b4a1f;
+            --warning-text: #ffab5c;
             --input-bg: #2a2a2a;
             --input-focus-bg: #333;
-            --danger-bg: #3a1f1f;
-            --danger-border: #6b3030;
+            --danger-bg: #3a1518;
+            --danger-border: #6b2a2a;
             --tag-bg: #16281c;
             --tag-border: #2d7a4e;
             --tag-text: #7fd9a8;
