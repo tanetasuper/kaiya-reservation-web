@@ -2389,7 +2389,21 @@ export default function Home() {
                     でなくなった後）はこのカードから貸切であることを示す手がかりが一切無くなっていた
                     （Meta CEO視点レビュー・ラウンド39での指摘：最低保証額が発生する買い切り予約なのに、
                     確定後は普通の予約と見分けがつかない）。status に関わらず常に表示する。 */}
-                {res.isKasshiki && (
+                {/* isKonsult（13名以上・大人数のご相談）はサーバー側で常にisKasshikiも同時にtrueになる
+                    （index.jsのconsultボタンがisKasshiki/isKonsultを同時にON、createReservationも経路列を
+                    isKasshikiと書き分けていない）ため、下のisKasshiki分岐と両方same-timeで真になり得る。
+                    isKonsultを先に判定して「🔒 貸切プラン」と「💬 貸切要相談」が二重表示されないようにする
+                    （Meta CEO視点レビュー・ラウンド41での指摘：貸切と大人数相談は最低保証額の有無等の
+                    運用が異なる別プランなので、確定後も見分けられる必要がある）。 */}
+                {res.isKonsult ? (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--sub)', fontWeight: 'bold' }}>
+                    {/* 予約フロー確認画面（confirm画面、selGuest==='konsult'の分岐）と同じ辞書キーを使う。
+                        t()の辞書キーは絵文字を含む'💬 貸切要相談'のため、絵文字をJSX側で分離すると
+                        exact-match lookupが失敗し英語ユーザーに生の日本語がそのまま表示される
+                        （ラウンド40での同種バグの再発防止）。 */}
+                    {t('💬 貸切要相談')}
+                  </div>
+                ) : res.isKasshiki && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--sub)', fontWeight: 'bold' }}>
                     {/* t()の辞書キーは絵文字を含む'🔒 貸切プラン'のため、絵文字をJSX側で分離すると
                         exact-match lookupが失敗し英語ユーザーに生の日本語がそのまま表示されていた

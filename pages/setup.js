@@ -185,6 +185,30 @@ export default function Setup() {
                 ⚠️ 「{preset.label}」は{preset.settings.staffLabel || '担当者'}単位の容量管理です。初期設定完了後、必ず管理画面の「設定」タブから{preset.settings.staffLabel || '担当者'}を最低1名登録してください（登録するまで、お客様の予約が全て「対応不可」になります）。
               </div>
             )}
+            {/* 業種を選ばずに進んだ場合（skipCategory()、presetKey=''）、settingsPatch/fsetPatchが
+                送られずCode.gs側の生の既定値（飲食店＝貝屋和光を前提にした値）がそのまま適用される。
+                従来はこの選択をした店主にその事実がどこにも伝わらず、美容院や整備工場等が「貸切（買い切り）
+                受付ON」「1名利用は相席が前提ON」のまま運用開始してしまう事故があった（ラウンド40での指摘）。
+                業種選択自体をやり直させる／最も近いプリセットを強制する案より低リスクな「明示的な警告」を
+                選択：どの既定値が残るか・どこで直せるかをこの画面と完了画面の両方で必ず知らせる。 */}
+            {!preset && (
+              <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)', borderRadius: 8, padding: '10px 14px', fontSize: 12, marginBottom: 16 }}>
+                ⚠️ 業種を選択しなかったため、以下の設定は飲食店（コース制）向けの既定値のまま適用されます。当てはまらない場合は、初期設定完了後に必ず管理画面の「設定」タブでそれぞれ見直してください。
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+                  <li>貸切（買い切り）予約の受付：有効（「設定」タブ→配信設定「貸切対応」）</li>
+                  <li>1名でのご来店は相席が前提：有効（「設定」タブ→配信設定「1名利用の相席ルール」）</li>
+                  <li>空き枠の管理方式：日ごとの空き枠（daily）（「設定」タブ「容量モデル」）</li>
+                  <li>「ご利用目的」の選択肢：飲食店向け（誕生日・記念日／接待・会食／友人・仲間と／家族で／デート／その他）（「設定」タブ「予約時の質問項目」）</li>
+                  {/* Apple CEO視点レビュー・ラウンド41での指摘：上記4件だけでは飲食店向け既定値の
+                      一部しか警告していなかった（Code.gsのdefaultFeatureSettings/getSettings等の
+                      既定値を確認し、以下4件も同種の見落としがあると判明）。 */}
+                  <li>予約経路の選択肢：食べログを含む（「設定」タブ「予約経路」）</li>
+                  <li>同伴者情報の入力欄：有効（「設定」タブ→配信設定「同伴者情報」）</li>
+                  <li>店舗固有機能タブの通知セクション：食べログ・カレンダー同期向けの項目が既定表示（「通知」タブ「店舗固有機能」）</li>
+                  <li>変更・キャンセルの受付締切：来店の2〜3日前22:00（飲食店の会席コース発注を前提。「設定」タブ「受付締切」）</li>
+                </ul>
+              </div>
+            )}
 
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle}>店舗の正式名称 *</label>
@@ -260,6 +284,21 @@ export default function Setup() {
             {needsStaff && (
               <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
                 ⚠️ 管理画面にログインしたら、{preset.settings.staffLabel || '担当者'}を最低1名登録してください（登録するまでお客様の予約が全て「対応不可」になります）。
+              </div>
+            )}
+            {!preset && (
+              <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
+                ⚠️ 業種を選択しなかったため、以下は飲食店（コース制）向けの既定値のまま反映されています。当てはまらない場合は、管理画面の「設定」タブでそれぞれ見直してください。
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+                  <li>貸切（買い切り）予約の受付：有効（配信設定「貸切対応」）</li>
+                  <li>1名でのご来店は相席が前提：有効（配信設定「1名利用の相席ルール」）</li>
+                  <li>空き枠の管理方式：日ごとの空き枠（daily）（「容量モデル」）</li>
+                  <li>「ご利用目的」の選択肢：飲食店向け（誕生日・記念日／接待・会食／友人・仲間と／家族で／デート／その他）（「予約時の質問項目」）</li>
+                  <li>予約経路の選択肢：食べログを含む（「予約経路」）</li>
+                  <li>同伴者情報の入力欄：有効（配信設定「同伴者情報」）</li>
+                  <li>店舗固有機能タブの通知セクション：食べログ・カレンダー同期向けの項目が既定表示（「通知」タブ「店舗固有機能」）</li>
+                  <li>変更・キャンセルの受付締切：来店の2〜3日前22:00（「受付締切」）</li>
+                </ul>
               </div>
             )}
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8, marginBottom: 16 }}>
