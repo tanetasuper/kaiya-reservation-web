@@ -93,6 +93,23 @@ function summarizeBulkMarkResult(results) {
     : (okCount > 0 ? `${okCount}件成功、${failCount}件失敗しました` : `${failCount}件とも失敗しました`)
   return { okCount, failCount, message }
 }
+// Code.gs側の業務バリデーション（例：所要時間・固定人数の不正値を保存時に拒否）が返すr.errorは
+// 日本語の具体的な理由文なのでそのまま表示すればよいが、GAS側で未処理の例外が起きた場合や、
+// プロキシ層（pages/api/gas.js）がGASの応答をJSONとして解釈できなかった場合は、
+// 「GAS returned non-JSON」「GASタイムアウト (>28s)」のような技術的な英語文字列がr.errorに
+// そのまま入ってくる。これを非エンジニアのスタッフにそのまま見せると、何が悪いのか・次に何をすれば
+// よいのかが一切わからない（ランダム客層視点レビュー・ラウンド43での指摘：staffが原因不明の英語
+// エラーで詰まるケースがあった）。この内部由来の技術メッセージだけを分かりやすい日本語に差し替え、
+// それ以外（Code.gsが発行した業務エラー）はそのまま見せる。
+const TECHNICAL_ERROR_PATTERNS = [/^GAS returned non-JSON/, /^GASタイムアウト/, /^GAS_URL not set/]
+function friendlyServerError(r, fallback) {
+  const raw = r && r.error
+  if (!raw) return fallback
+  if (TECHNICAL_ERROR_PATTERNS.some(p => p.test(raw))) {
+    return `保存できませんでした。時間をおいて再度お試しください。繰り返し失敗する場合は開発担当にご連絡ください（詳細：${raw}）`
+  }
+  return raw
+}
 // 'グループA'='仙一・種谷・徳さんのみ（少人数）'、'グループB'='スタッフ全員'。現場に伝わる言葉に置き換える。
 const NOTIFY_TARGET_OPTIONS = [['','スタッフ全員に通知（既定）'], ['A','一部の担当者だけに通知'], ['none','通知しない（記録には残ります）']]
 // 'カレンダー削除'は元々このリストに入っていたが、コード全体を検索してもこの値をバックエンド
@@ -1121,9 +1138,13 @@ function SetupWizard({ onClose, onApply }) {
                 店舗がウィザードを再実行すると、質問には出てこない項目（呼び方以外のcapacityModel・
                 cutoffRules・通知セクション既定値等）まで含めて、運用中に個別カスタマイズした値が
                 無警告でプリセットの既定値に戻ってしまう（Apple CEO視点レビュー・ラウンド40での指摘、
-                今回警告文を追加して対応）。 */}
+                今回警告文を追加して対応）。文言は当初「容量管理方式・受付締切・通知の既定表示等」という
+                内部用語寄りの表現だったが、店主が実際に思い当たる操作（呼び方を変えた／お客様への
+                質問の選択肢を変えた／通知タブの表示項目を変えた等）に言い換えないと、読んでも
+                「自分は何を失うのか」が実感しにくく読み飛ばされる（業種経営者陣視点レビュー・
+                第43回での指摘）。具体的な項目名に置き換える。 */}
             <div style={{ background:'var(--amber-bg)', border:'1px solid var(--amber-border)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'var(--amber-text)', marginBottom:12 }}>
-              ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。この操作は「{preset.label}」プリセットの設定項目（容量管理方式・受付締切・通知の既定表示等、上記の質問に出てこない項目も含む）を丸ごと上書きします。初めての導入設定ではなく、運用中の設定を一部だけ見直したい場合は、ウィザードではなく「設定」「配信設定」タブから個別に変更することをおすすめします。
+              ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。この操作は「{preset.label}」プリセットの設定項目（呼び方、お客様への質問の選択肢（Q1/Q2）、受付締切の日数・時刻、貸切等の追加機能のON/OFF、通知タブの店舗専用項目の表示 等、上記の質問に出てこない項目も含む）を丸ごと上書きします。初めての導入設定ではなく、運用中の設定を一部だけ見直したい場合は、ウィザードではなく「設定」「配信設定」タブから個別に変更することをおすすめします。
             </div>
             <div style={{ background:'var(--bg-subtle)', borderRadius:10, padding:14, fontSize:13, color:'var(--text-primary)', lineHeight:1.8, marginBottom:12 }}>
               <div><b>業種：</b>{preset.label}</div>
@@ -1836,9 +1857,14 @@ export default function Admin() {
     const needsStaff = preset.settings.capacityModel === 'perStaff'
     const staffLabelForPreset = preset.settings.staffLabel || '担当者'
     const countUnitForPreset = preset.settings.countUnit || '名'
+    // 以前はこのconfirm文言に「貸切機能・1名相席ルール」という飲食店専用の概念を全業態共通で
+    // 固定表示していた（kasshiki/singleDinerRequiresCompanyはcourse_dining以外は既定OFFで、
+    // サロン・整備工場等の店主には無関係な用語）。業種経営者陣視点レビュー・第43回での指摘：
+    // 「詳しい方向け」の直接適用でも表示は全業態共通でよいが、内容は飲食店に限定しない一般的な
+    // 表現にする（呼び方・お客様への質問内容・通知設定等、どの業態でも当てはまる項目に統一）。
     const ok = window.confirm(
       `「${preset.label}」向けの設定を一括で適用します。\n\n` +
-      `コース選択・容量の数え方・${staffLabelForPreset}指名・貸切機能・1名相席ルール等、複数の項目がまとめて変更されます（コース一覧・営業時間・料金等は変更されません）。\n` +
+      `呼び方・容量の数え方・${staffLabelForPreset}指名・お客様への質問内容（Q1/Q2）・受付締切・通知関連の設定等、複数の項目がまとめて変更されます（コース一覧・営業時間・料金等は変更されません）。\n` +
       `適用後もまだ保存されていません。「設定」タブと「配信設定」タブ、両方の保存ボタンを押すまで反映されない点にご注意ください。\n` +
       (needsStaff ? `\n⚠️ このプリセットは「${staffLabelForPreset}単位」の容量管理です。適用後、下の「${staffLabelForPreset}一覧」に最低1${countUnitForPreset}登録しないと、お客様の予約が全て「対応不可」になります。\n` : '') +
       `\nよろしいですか？`
@@ -2249,7 +2275,7 @@ export default function Admin() {
       else if (r.conflict) {
         if (window.confirm((r.error || '他の管理者が先に保存しました。') + '\n画面を再読み込みしますか？')) await loadSettings()
       }
-      else showToast(r.error||'保存に失敗しました','error')
+      else showToast(friendlyServerError(r, '保存に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください','error') }
     setSettingsSaving(false)
   }
@@ -3199,8 +3225,19 @@ export default function Admin() {
                     導入ウィザードを主要な導線にし、業種ごとの追加質問（呼び方等）で自由度を持たせる。質問なしで即適用したい
                     場合向けに、従来の「業態を選んで直接適用」も残す（好みが分かれるため両方用意）。 */}
                 <div style={{ background:'var(--bg-card)', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px var(--shadow-sm)', border:'1px solid var(--info-bg)' }}>
-                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>業態プリセット（新規導入・業態変更時に使う）</h2>
-                  <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>この店舗の業態に近いものを選ぶと、コース選択・容量の数え方・呼び方・貸切機能・1名相席ルール・Q1・Q2の選択肢等の関連設定がまとめて変更されます。適用後も内容は自由に調整でき、コース一覧・営業時間・料金は変更されません。</div>
+                  {/* このカード内だけで「業態」（見出し・説明文）と「業種」（下のボタン・クイック適用の
+                      選択肢）が混在し、同じ機能を指す語が数行の間で切り替わっていた（Apple CEO視点
+                      レビュー・第43回での指摘）。プロジェクト全体での「業種」「業態」の使い分け統一は
+                      規模が大きく別途の判断が必要だが、このカードのように文言が視界内で切り替わる
+                      箇所は narrow に直せるため、下のボタン（「業種を選んで設定する」）・開くモーダル
+                      （SetupWizard）・setup.jsの初期設定画面が既に一貫して使っている「業種」に統一する。 */}
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>業種プリセット（新規導入・業種変更時に使う）</h2>
+                  {/* 「貸切機能・1名相席ルール」は飲食店（course_dining）専用の概念（kasshiki/
+                      singleDinerRequiresCompanyは他業態では既定OFF）だが、この説明文はどの業態の
+                      店主にも共通で表示されるため、サロン・整備工場等の店主には無関係な用語が
+                      混ざっていた（業種経営者陣視点レビュー・第43回での指摘）。全業態に当てはまる
+                      表現に統一する。 */}
+                  <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>この店舗の業種に近いものを選ぶと、コース選択・容量の数え方・呼び方・お客様への質問（Q1・Q2）の選択肢・貸切等の追加機能等の関連設定がまとめて変更されます。適用後も内容は自由に調整でき、コース一覧・営業時間・料金は変更されません。</div>
                   <button onClick={() => setShowWizard(true)} style={{ ...btnGreen, marginBottom:10 }}>
                     業種を選んで設定する
                   </button>
@@ -3215,7 +3252,7 @@ export default function Admin() {
                       <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end' }}>
                         <div style={{ flex:'1 1 320px' }}>
                           <CustomSelect value={presetChoice} onChange={e => setPresetChoice(e.target.value)} style={{ width:'100%' }}>
-                            <option value="">業態を選択してください</option>
+                            <option value="">業種を選択してください</option>
                             {VERTICAL_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                           </CustomSelect>
                         </div>
@@ -3237,7 +3274,7 @@ export default function Admin() {
                               指摘）。ウィザード側と同じ常時表示のアンバー警告を、確認ダイアログを開く前の
                               段階で出す（window.confirm自体は最終確認として残す）。 */}
                           <div style={{ background:'var(--amber-bg)', border:'1px solid var(--amber-border)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'var(--amber-text)', marginTop:8 }}>
-                            ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。「適用する」を押すと「{VERTICAL_PRESETS.find(p => p.key === presetChoice)?.label}」プリセットの設定項目（容量管理方式・受付締切・通知の既定表示等）を丸ごと上書きします。運用中の設定を一部だけ見直したい場合は、「設定」「配信設定」タブから個別に変更することをおすすめします。
+                            ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。「適用する」を押すと「{VERTICAL_PRESETS.find(p => p.key === presetChoice)?.label}」プリセットの設定項目（呼び方、お客様への質問の選択肢（Q1/Q2）、受付締切の日数・時刻、貸切等の追加機能のON/OFF、通知タブの店舗専用項目の表示 等）を丸ごと上書きします。運用中の設定を一部だけ見直したい場合は、「設定」「配信設定」タブから個別に変更することをおすすめします。
                           </div>
                         </>
                       )}

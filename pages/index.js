@@ -559,6 +559,16 @@ export default function Home() {
   // シリーズ一括キャンセルは単発キャンセルより影響範囲が大きい（最大8件）のに確認ダイアログが
   // 無かった（テスト全部隊レビュー・2026-08-11で複数視点から指摘）。単発と同じ二段階確認にする。
   const [seriesCancelConfirmId, setSeriesCancelConfirmId] = useState(null)
+  // 単発キャンセル・シリーズ一括キャンセル・見積承諾/辞退の3つの「本当に良いか」確認ブロックは、
+  // 出現してもフォーカスが移動せず、画面を見ていない（スクリーンリーダー利用中の）お客様には
+  // 出現したこと自体が伝わらなかった（Appleデザインチーム視点レビュー・ラウンド43での指摘）。
+  // 各予約カードは一覧内でmapされるため単一のuseRefでは対象を一意に特定できず、
+  // res.id等をキーにした登録用マップに「はい」ボタンのDOM要素を集約し、対応するidステートが
+  // セットされた時だけそのボタンへフォーカスを移す（見た目・既存の確認フロー自体は変更しない）。
+  const cnlYesRefs = useRef({})
+  useEffect(() => { if (cancelId != null) cnlYesRefs.current[`cancel-${cancelId}`]?.focus() }, [cancelId])
+  useEffect(() => { if (seriesCancelConfirmId != null) cnlYesRefs.current[`series-${seriesCancelConfirmId}`]?.focus() }, [seriesCancelConfirmId])
+  useEffect(() => { if (estimateConfirm != null) cnlYesRefs.current[`estimate-${estimateConfirm.id}`]?.focus() }, [estimateConfirm])
   const [myResErr, setMyResErr] = useState('')
   const [myResNeedsPhone, setMyResNeedsPhone] = useState(false)
   const [myResPhoneInput, setMyResPhoneInput] = useState('')
@@ -1157,7 +1167,17 @@ export default function Home() {
   function scrollToCard(id) {
     if (typeof document === 'undefined') return
     const el = document.getElementById(id)
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // 見た目はこのscrollIntoViewで該当カードまでスクロールするが、キーボード操作・スクリーンリーダー
+    // 利用者はそれだけでは実際のフォーカス位置が変わらず、直前にいた場所（例：はるか下の
+    // 「確認画面へ」ボタン）に留まったままになる。エラー本文自体はrole="alert"で読み上げられるが、
+    // 読み上げ後にTabしても該当項目には飛べず、直す場所まで手動で戻って探す必要があった
+    // （ランダム客層＝スクリーンリーダー利用者視点レビュー・ラウンド43での指摘）。
+    // カード自体に一時的にフォーカスを移し、以降のTab操作をこのカードの内側から開始できるようにする
+    // （tabindexは通常のTab順に混ざらないよう-1のまま。持たせていないカードだけ動的に付与する）。
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1')
+    el.focus({ preventScroll: true })
   }
   function errAt(id, msg) {
     setInputErr(msg)
@@ -1188,7 +1208,7 @@ export default function Home() {
         return errAt('card-guest', lang === 'en' ? `Only ${avail.remainingSeats} ${countUnit} remaining, so we can't accept a party of ${n}` : `残り${avail.remainingSeats}${countUnit}のため、${guestsWithUnit(n)}のご予約はお受けできません`)
       }
       if (n === 1 && !avail.canBook1)
-        return errAt('card-guest', countUnit === '名' ? t('1名様のご予約はこの日はお受けできません') : (lang === 'en' ? `A single ${countUnit} reservation is not available for this date` : `1${countUnit}のご予約はこの日はお受けできません`))
+        return errAt('card-guest', guestUnit === '名' ? t('1名様のご予約はこの日はお受けできません') : (lang === 'en' ? `A single ${guestUnit} reservation is not available for this date` : `1${guestUnit}のご予約はこの日はお受けできません`))
     }
     setInputErr('')
     // privacyConsentは入力画面上の他の同意チェックボックス（満席日のキャンセル待ちカード・貸切満席
@@ -1209,9 +1229,22 @@ export default function Home() {
   // 確認画面・完了画面・エラー文言は「名様」がハードコードされたままだった（累積指摘の総棚卸しでの
   // 指摘）。ボタンラベルと同じcountUnit方式に統一する。「名」の場合のみ既存のt('名様')（敬称付き）を
   // 使い、店舗独自の単位（台・件等）には敬称を付けない（「2台様」等は不自然なため）。
+  //
+  // ↑の統一を全業態にそのまま広げた結果、新しい不整合が生まれていた（業種経営者陣視点レビュー・
+  // 第43回での指摘）：capacityModel==='perStaff'（車両・器材等を1台＝1予約枠として管理する業態）
+  // では、この「人数」欄はその1台に乗る／使う人の頭数（車のレンタルの乗車人数、ボートの乗員数等）
+  // を表し、countUnit（台・件等、資産側の数え方）とは別の概念——レンタカー1台に3人乗っても消費する
+  // 車両は1台のまま（avail計算もcanBook2to5等でstaffLabel側だけを見ており、countUnit側の残数計算には
+  // guestsを使っていない。1195〜1199行目付近参照）。そのためcountUnitが「台」のcar_rental・
+  // leisure_equipプリセットでは、乗車人数の選択ボタンが「3台」のように表示され、お客様には「3人分の
+  // 予約＝車3台？」という誤解を招く。一方、capacityModel!=='perStaff'（daily/timeSlot）の業態
+  // （飲食店のcountUnit=名、レンタサイクルのcountUnit=台等）は人数がそのまま容量消費数と一致するため
+  // 従来通りcountUnitでよい。「人（頭数）」は業態を問わず常に「名」で数えるべき概念のため、
+  // perStaffの場合だけ「名」に固定した専用の単位（guestUnit）を用意し、人数系の表示はここを使う。
+  const guestUnit = capacityModel === 'perStaff' ? '名' : countUnit
   function guestsWithUnit(g) {
-    if (countUnit === '名') return `${g}${t('名様')}`
-    return lang === 'en' ? `${g} ${countUnit}` : `${g}${countUnit}`
+    if (guestUnit === '名') return `${g}${t('名様')}`
+    return lang === 'en' ? `${g} ${guestUnit}` : `${g}${guestUnit}`
   }
   // 予約済みレコードの人数表示（'未定'＝人数未確定の予約は言語に応じて翻訳表示する。
   // 生の '未定' 文字列に単位を連結すると英語表示時に "未定 guests" のような
@@ -1363,7 +1396,11 @@ export default function Home() {
         setEstimateRespondErrId(id)
       }
     } catch {
-      setEstimateRespondErr(t('通信エラーが発生しました。もう一度お試しください。'))
+      // キャンセル（execCancel）・シリーズまとめてキャンセル（cancelSeriesAll）は通信エラー時も
+      // 「失敗する場合はお電話にてご連絡ください」まで文言に含めているのに、この見積応答（承諾/辞退）
+      // だけ「もう一度お試しください」のみで電話への逃げ道が無く、繰り返し失敗すると詰んでいた
+      // （ランダム客層視点レビュー・ラウンド43での指摘：確立済みパターンからの抜け漏れ）。
+      setEstimateRespondErr(t('通信エラーが発生しました。もう一度お試しいただき、失敗する場合はお電話にてご連絡ください。'))
       setEstimateRespondErrId(id)
     }
     setEstimateRespondingId(null)
@@ -1602,15 +1639,23 @@ export default function Home() {
             </div>
             <p className="ld-txt">{t('読み込み中...')}</p>
             {longWait && (
-              <>
+              // role="status" aria-live="polite"：このブロック自体はタイマーで無音に出現するため、
+              // ファイル内の他の動的メッセージ（role="alert"のエラー群等）と同じく出現をスクリーン
+              // リーダーにも伝える（Appleデザインチーム視点レビュー・ラウンド43での指摘）。
+              // エラーではないためpolite（assertiveだと読み込み中の他の案内を遮ってしまう）。
+              <div role="status" aria-live="polite">
                 <p className="ld-txt" style={{ fontSize: 12, marginTop: 6, opacity: 0.8 }}>{t('通信状況により、時間がかかる場合があります。しばらくお待ちください。')}</p>
                 {/* タイマー任せの自動フォールバック（9秒）だけでなく、待たされている本人が今すぐ
-                    進める手段も用意する（ランダム客層視点レビュー・ラウンド42での指摘）。 */}
+                    進める手段も用意する（ランダム客層視点レビュー・ラウンド42での指摘）。ボタンは
+                    既存のセカンダリCTA（linechoice画面の「LINEを使わずに予約する」等）と同じ
+                    .btn-sクラスを使うことで見た目・タップ領域（padding15px×width100%）を統一し、
+                    ラベルのみで動作が伝わるためaria-labelは不要（Appleデザインチーム視点レビュー・
+                    ラウンド43での確認）。 */}
                 <button className="btn-s" style={{ maxWidth: 320, margin: '14px auto 0' }}
                   onClick={proceedAsGuest}>
                   {t('続ける（ゲストとして予約する）')}
                 </button>
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -1788,9 +1833,12 @@ export default function Home() {
                             通り自然な"guest(s)"のまま、カスタマイズされている場合は他の箇所（1013・1474行目
                             付近）と同じくcountUnitの値をそのまま添える形にする（審判団バックログ一括
                             レビューでの指摘）。 */}
+                        {/* この人数ボタンはcountUnit（資産側の数え方）ではなく、乗る／使う人の頭数を
+                            表すguestUnitを使う（perStaffの車両・器材等ではcountUnitと別概念のため。
+                            1244行目付近のguestUnit定義コメント参照、業種経営者陣視点レビュー・第43回）。 */}
                         <span className="g-btn-main">{lang === 'en'
-                          ? (countUnit === '名' ? `${n} guest${n === 1 ? '' : 's'}` : `${n} ${countUnit}`)
-                          : `${n}${countUnit}`}</span>
+                          ? (guestUnit === '名' ? `${n} guest${n === 1 ? '' : 's'}` : `${n} ${guestUnit}`)
+                          : `${n}${guestUnit}`}</span>
                         {isOccupied && <span className="g-btn-sub">{n === 1 ? t('条件あり') : t('満席')}</span>}
                       </button>
                     )
@@ -2257,8 +2305,32 @@ export default function Home() {
                   <div style={{ fontSize: 12, color: 'var(--sub)', marginTop: 8, lineHeight: 1.7 }}>
                     {t('申し込まれる日程')}：{buildRecurringDates(selDate, recurringFrequency, recurringCount, customIntervalWeeks).map(d => fmtDateLang(d, lang)).join(lang === 'en' ? ', ' : '、')}
                   </div>
+                  {/* 合計金額（目安）：ラウンド42では「countUnitに依存する価格の意味が業態ごとに違う」ため
+                      表示を見送っていた。上に表示している単価は「countUnitが台＝1台あたりの単位料金（人数が
+                      増えても変わらない）」か「お一人様＝1人あたりの単価」のどちらかだが、後者はこのアプリが
+                      人数×単価の掛け算をどこでも行っていない（人数によって実際の会計が変わる飲食店のコース等）。
+                      そのため合計を「単価×回数」で出すと、複数名で申し込む飲食店等では実際より少ない金額に
+                      見えてしまう危険がある。安全に合計を出せるのは、単価がそもそも人数に左右されない場合
+                      （countUnit==='台'＝車両・器材等を1台単位で数える業態）か、人数が常に1に固定されている場合
+                      （guestCountEnabledがOFF＝美容院・クリニック・整備工場等、常に1名分の単価＝1回の実費用）
+                      に限られる。この2条件のどちらにも当たらない場合（飲食店のように人数を選ばせつつ
+                      お一人様単価で課金する業態）は、誤った金額を見せるリスクを避けて表示しない
+                      （Apple CEO視点レビュー・第43回：countUnitが独立した入力欄になったことで初めて
+                      この条件分岐が安全に書けるようになった）。 */}
+                  {!isSimpleMode && (countUnit === '台' || !guestCountEnabled) && Number.isFinite(Number(visibleCourses[selCourse]?.price)) && (
+                    <div style={{ fontSize: 12, color: 'var(--sub)', marginTop: 4, lineHeight: 1.7 }}>
+                      {lang === 'en'
+                        ? `Total (approx.): ¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()} for ${recurringCount} visits`
+                        : `合計（目安）：¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()}（${recurringCount}回分）`}
+                    </div>
+                  )}
+                  {/* 「来店日」がvisitText()を経由せずt()に直渡しされていたため、visitNounを
+                      カスタマイズした業態（クリニックの「来院」、学習塾の「来塾」等——定期予約を
+                      実際に使いたがる業種でもある）で日本語表示のままこの1文だけ「来店日」に
+                      戻ってしまっていた（他の全箇所は同じ理由でvisitText()を使っている。1728・1752・
+                      2213行目付近参照）。業種経営者陣視点レビュー・第43回での指摘。 */}
                   <div style={{ fontSize: 11, color: 'var(--hint)', marginTop: 6 }}>
-                    {t('選択した来店日を1回目として、以降を自動で申し込みます。満席等で確定できない回があった場合は、その回だけ個別にご連絡します。')}
+                    {visitText('選択した来店日を1回目として、以降を自動で申し込みます。満席等で確定できない回があった場合は、その回だけ個別にご連絡します。')}
                   </div>
                 </div>
               )}
@@ -2463,10 +2535,10 @@ export default function Home() {
                       </button>
                     )}
                     {seriesCancelConfirmId === res.seriesId && (
-                      <div className="cnl-confirm" style={{ marginTop: 6 }}>
-                        <p className="cnl-msg">{t('このシリーズの今後の予約をすべてキャンセルします。よろしいですか？')}</p>
+                      <div className="cnl-confirm" style={{ marginTop: 6 }} role="alertdialog" aria-live="assertive" aria-labelledby={`cnl-msg-series-${res.seriesId}`}>
+                        <p className="cnl-msg" id={`cnl-msg-series-${res.seriesId}`}>{t('このシリーズの今後の予約をすべてキャンセルします。よろしいですか？')}</p>
                         <div className="cnl-btns">
-                          <button className="cnl-yes" disabled={seriesCancelingId === res.seriesId}
+                          <button className="cnl-yes" ref={el => { cnlYesRefs.current[`series-${res.seriesId}`] = el }} disabled={seriesCancelingId === res.seriesId}
                             onClick={() => { setSeriesCancelConfirmId(null); cancelSeriesAll(res.seriesId) }}>
                             {seriesCancelingId === res.seriesId ? t('処理中...') : t('はい')}
                           </button>
@@ -2502,10 +2574,10 @@ export default function Home() {
                       </button>
                     </div>
                     {estimateConfirm?.id === res.id && (
-                      <div className="cnl-confirm" style={{ marginTop: 8 }}>
-                        <p className="cnl-msg">{estimateConfirm.accept ? t('この見積を承諾します。よろしいですか？') : t('この見積を辞退します。よろしいですか？（ご来店予約自体は継続します）')}</p>
+                      <div className="cnl-confirm" style={{ marginTop: 8 }} role="alertdialog" aria-live="assertive" aria-labelledby={`cnl-msg-estimate-${res.id}`}>
+                        <p className="cnl-msg" id={`cnl-msg-estimate-${res.id}`}>{estimateConfirm.accept ? t('この見積を承諾します。よろしいですか？') : t('この見積を辞退します。よろしいですか？（ご来店予約自体は継続します）')}</p>
                         <div className="cnl-btns">
-                          <button className="cnl-yes" disabled={estimateRespondingId === res.id}
+                          <button className="cnl-yes" ref={el => { cnlYesRefs.current[`estimate-${res.id}`] = el }} disabled={estimateRespondingId === res.id}
                             onClick={() => { const c = estimateConfirm; setEstimateConfirm(null); respondEstimate(c.id, c.accept) }}>
                             {estimateRespondingId === res.id ? t('送信中...') : t('はい')}
                           </button>
@@ -2519,6 +2591,16 @@ export default function Home() {
                 {(res.estimateStatus === '承諾済み' || res.estimateStatus === '辞退済み') && (
                   <div style={{ marginTop: 8, fontSize: 13, color: 'var(--sub)' }}>
                     💰 {t('お見積り')}：¥{(parseFloat(res.estimateAmount) || 0).toLocaleString()}　{res.estimateStatus === '承諾済み' ? `✅ ${t('承諾済み')}` : `— ${t('辞退済み')}`}
+                    {/* 「提示済み」「完了」の両カードには既にある部品代・工賃の内訳・メモが、承諾／辞退直後の
+                        この状態だけ欠けていた（Meta CEO視点レビュー・ラウンド43での指摘：見積送信時の
+                        LINE/メール通知にはメモ・内訳が載っているのに、画面側は承諾・辞退した直後の画面だけ
+                        総額のみに縮退し、「完了」に進むまでメモ・内訳を見返す手段が無かった）。 */}
+                    {res.estimatePartsAmount && res.estimateLaborAmount && (
+                      <div style={{ fontSize: 12, marginTop: 2 }}>
+                        {t('部品代')}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{t('工賃')}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
+                      </div>
+                    )}
+                    {res.estimateNote && <div style={{ fontSize: 12, marginTop: 2 }}>{res.estimateNote}</div>}
                   </div>
                 )}
                 {/* 承諾済みの見積の作業が完了した状態（業種経営者陣視点レビュー・2026-08-13で新設）。
@@ -2547,6 +2629,9 @@ export default function Home() {
                         {t('部品代')}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{t('工賃')}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
                       </div>
                     )}
+                    {/* 内訳と同じ理由（ラウンド43での指摘）：メモも「提示済み」カードにしかなく、「完了」まで
+                        進むと見返す手段が無かった。 */}
+                    {res.estimateNote && <div style={{ fontWeight: 'normal', fontSize: 12, marginTop: 2 }}>{res.estimateNote}</div>}
                   </div>
                 )}
                 {res.status === 'キャンセル' ? (
@@ -2600,10 +2685,10 @@ export default function Home() {
                       <button className="btn-cnl" onClick={() => { setCancelId(res.id); setCancelErr('') }}>{t('キャンセル')}</button>
                     </div>
                     {cancelId === res.id && (
-                      <div className="cnl-confirm">
-                        <p className="cnl-msg">{t('本当にキャンセルしますか？')}</p>
+                      <div className="cnl-confirm" role="alertdialog" aria-live="assertive" aria-labelledby={`cnl-msg-cancel-${res.id}`}>
+                        <p className="cnl-msg" id={`cnl-msg-cancel-${res.id}`}>{t('本当にキャンセルしますか？')}</p>
                         <div className="cnl-btns">
-                          <button className="cnl-yes" disabled={cancelingId === res.id} onClick={() => execCancel(res.id)}>
+                          <button className="cnl-yes" ref={el => { cnlYesRefs.current[`cancel-${res.id}`] = el }} disabled={cancelingId === res.id} onClick={() => execCancel(res.id)}>
                             {cancelingId === res.id ? t('処理中...') : t('はい')}
                           </button>
                           <button className="cnl-no" disabled={!!cancelingId} onClick={() => { setCancelId(null); setCancelErr('') }}>{t('いいえ')}</button>
@@ -2698,6 +2783,20 @@ export default function Home() {
                     <span style={{ fontSize:13, color:'var(--hint)' }}>{capacityModel === 'perStaff' ? staffCheckingText() : t('空き状況を確認中...')}</span>
                   </div>
                 )}
+                {/* 新規予約フロー（card-guest、1753行目付近）には既にある残席確認失敗時のエラー表示＋
+                    再試行ボタンが、変更フローのこの人数カードだけ丸ごと欠落していた（Meta CEO視点
+                    レビュー・ラウンド43での指摘：availErrはchgGuestDisabled/guestDisabled両方から
+                    参照される共有stateで、セットされると両フローで人数ボタンが全て無効化されるのに、
+                    変更フロー側だけ理由も再試行手段も一切案内されず詰みになっていた）。 */}
+                {availErr && !availLoading && (
+                  <div role="alert" aria-live="polite" style={{ background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 12px', marginBottom:10, fontSize:13, color:'var(--red)' }}>
+                    {availErr}
+                    <button onClick={() => fetchAvailability(chgDate, chgTime, changingRes?.course)}
+                      style={{ marginLeft:8, background:'var(--white)', border:'1px solid var(--red)', color:'var(--red)', borderRadius:6, padding:'12px 16px', minHeight:44, minWidth:44, fontSize:13, fontWeight:'bold', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center' }}>
+                      {t('再試行')}
+                    </button>
+                  </div>
+                )}
                 <div className="g-row">
                   {[1,2,3,4,5,6,7,8,9,10,11,12].map((n) => {
                     const disabled = chgGuestDisabled(n)
@@ -2713,9 +2812,12 @@ export default function Home() {
                             通り自然な"guest(s)"のまま、カスタマイズされている場合は他の箇所（1013・1474行目
                             付近）と同じくcountUnitの値をそのまま添える形にする（審判団バックログ一括
                             レビューでの指摘）。 */}
+                        {/* この人数ボタンはcountUnit（資産側の数え方）ではなく、乗る／使う人の頭数を
+                            表すguestUnitを使う（perStaffの車両・器材等ではcountUnitと別概念のため。
+                            1244行目付近のguestUnit定義コメント参照、業種経営者陣視点レビュー・第43回）。 */}
                         <span className="g-btn-main">{lang === 'en'
-                          ? (countUnit === '名' ? `${n} guest${n === 1 ? '' : 's'}` : `${n} ${countUnit}`)
-                          : `${n}${countUnit}`}</span>
+                          ? (guestUnit === '名' ? `${n} guest${n === 1 ? '' : 's'}` : `${n} ${guestUnit}`)
+                          : `${n}${guestUnit}`}</span>
                         {/* 1名だけは「満席」ではなく「条件あり」（1名利用は相席時のみ受付、というポリシー上の
                             制限であって、実際に満席とは限らない）。新規予約フロー（1390行目付近）には
                             既にこの分岐があるが、変更フローのボタンだけ漏れていた（ランダム客層視点
