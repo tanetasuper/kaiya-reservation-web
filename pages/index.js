@@ -850,7 +850,11 @@ export default function Home() {
   // date: targetDate || selDate が誤ってイベントオブジェクトの方を採用してしまう
   // ——ランダム客層視点レビューでの指摘：新規予約フローの2箇所が実際にこの書き方になっており、
   // キャンセル待ち登録のたびに送信される日付が壊れていた）。
-  async function joinWaitlist(targetDate, targetGuests) {
+  // targetTime：変更フロー向け（chgTime）。省略時（新規予約フロー）はselTimeを使う。
+  // 以前はtargetDateが渡された（＝変更フロー由来の呼び出し全て）場合にtimeを常にundefinedで
+  // 送信していたため、お客様が「ちょうどこの時間・担当者」（strict）を選んでも、実際に送信される
+  // 時間が常に空になり選択が黙って無効化されていた（ランダム客層視点レビュー・ラウンド37での指摘）。
+  async function joinWaitlist(targetDate, targetGuests, targetTime) {
     if (!name.trim() || !phone.trim()) { setWlErr(t('お名前と電話番号を入力してください')); return }
     if (!isValidPhoneFormat(phone)) { setWlErr(t('電話番号の形式が正しくありません')); return }
     setWlSubmitting(true)
@@ -870,7 +874,10 @@ export default function Home() {
         // 変更フローからの登録なのに別フローの人数が紛れ込む（ランダム客層視点レビューでの指摘）。
         date: targetDate !== undefined ? targetDate : selDate,
         guests: targetGuests !== undefined ? targetGuests : (effectiveGuests || ''),
-        time: targetDate !== undefined ? undefined : selTime,
+        time: targetDate !== undefined ? targetTime : selTime,
+        // 変更フロー画面には担当者選択UI自体が無いため（新規予約フローの指名ボタンに相当するものが
+        // 存在しない）、targetDateが渡された場合はstaffを送らない。これは既存の挙動と同じで、今回の
+        // 修正では「時間」だけを変更フローからも正しく送るようにする（担当者の扱いは別途検討候補）。
         staff: (targetDate !== undefined || !staffAssignmentEnabled) ? undefined : selStaff,
         notifyCondition, language: lang,
       })
@@ -1646,7 +1653,7 @@ export default function Home() {
                   <p className="hint">{t('この日はご案内できる時間帯がありません。別の日をお選びください。')}</p>
                 ) : (
                   <>
-                    <TimeGrid value={selTime} onChange={(s) => { setSelTime(s); setInputErr(''); if (selDate) fetchAvailability(selDate, s, visibleCourses[selCourse]?.name, staffAssignmentEnabled ? selStaff : undefined) }} slots={courseTimeSlots} />
+                    <TimeGrid value={selTime} onChange={(s) => { setSelTime(s); setInputErr(''); setWlDone(false); setWlErr(''); if (selDate) fetchAvailability(selDate, s, visibleCourses[selCourse]?.name, staffAssignmentEnabled ? selStaff : undefined) }} slots={courseTimeSlots} />
                     <p className="hint">
                       {courseTimeSlots.length > 0
                         ? (lang === 'en'
@@ -2001,13 +2008,14 @@ export default function Home() {
                   <div className="card-lbl card-lbl-optional">{t('🔖 ご指名（任意）')}</div>
                   <div className="card-body">
                     <div className="q-btn-row" style={{ opacity: availLoading ? 0.6 : 1 }}>
-                      <button disabled={availLoading} className={`q-btn${selStaff === '' ? ' sel' : ''}`} aria-pressed={selStaff === ''} onClick={() => { setSelStaff(''); if (selDate && selTime) fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, undefined) }}>
+                      <button disabled={availLoading} className={`q-btn${selStaff === '' ? ' sel' : ''}`} aria-pressed={selStaff === ''} onClick={() => { setSelStaff(''); setWlDone(false); setWlErr(''); if (selDate && selTime) fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, undefined) }}>
                         {t('指名なし')}
                       </button>
                       {staffRoster.map(s => (
                         <button key={s.name} disabled={availLoading} className={`q-btn${selStaff === s.name ? ' sel' : ''}`} aria-pressed={selStaff === s.name} onClick={() => {
                           const next = selStaff === s.name ? '' : s.name
                           setSelStaff(next)
+                          setWlDone(false); setWlErr('')
                           if (selDate && selTime) fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, next || undefined)
                         }}>
                           {s.name}
@@ -2557,7 +2565,7 @@ export default function Home() {
                 {chgTimeSlots.length === 0 ? (
                   <p className="hint">{t('この日はご案内できる時間帯がありません。別の日をお選びください。')}</p>
                 ) : (
-                  <TimeGrid value={chgTime} onChange={(s) => { setChgTime(s); setChgErr(''); if (chgDate) fetchAvailability(chgDate, s, changingRes?.course) }} slots={chgTimeSlots} />
+                  <TimeGrid value={chgTime} onChange={(s) => { setChgTime(s); setChgErr(''); setWlDone(false); setWlErr(''); if (chgDate) fetchAvailability(chgDate, s, changingRes?.course) }} slots={chgTimeSlots} />
                 )}
               </div>
             </div>
@@ -2626,6 +2634,21 @@ export default function Home() {
                           <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('電話番号')} aria-label={t('電話番号')}
                             style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--input-bg)', color:'var(--text)' }} />
                         </div>
+                        {/* 新規予約フローの同種カード（上部）には既にある通知条件の選択が、変更フロー側のこの
+                            カードだけ欠落していた（ランダム客層視点レビュー・ラウンド37での指摘）。 */}
+                        {capacityModel !== 'daily' && (
+                          <div style={{ marginBottom:8, fontSize:12, color:'var(--sub)' }}>
+                            <div style={{ marginBottom:4 }}>{t('どのように通知しますか？')}</div>
+                            <label style={{ display:'flex', alignItems:'center', gap:6, marginBottom:2, cursor:'pointer' }}>
+                              <input type="radio" checked={wlNotifyCondition === 'strict'} onChange={() => setWlNotifyCondition('strict')} />
+                              <span>{t('ちょうどこの時間・担当者が空いたときだけ通知する')}</span>
+                            </label>
+                            <label style={{ display:'flex', alignItems:'center', gap:6, cursor:'pointer' }}>
+                              <input type="radio" checked={wlNotifyCondition === 'anyTime'} onChange={() => setWlNotifyCondition('anyTime')} />
+                              <span>{t('同じ日ならいつでも良いので、空きが出たら通知する')}</span>
+                            </label>
+                          </div>
+                        )}
                         {wlErr && <div style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginBottom:8, cursor:'pointer' }}>
                           <input type="checkbox" checked={privacyConsent} onChange={(e) => setPrivacyConsent(e.target.checked)} style={{ marginTop:2 }} />
@@ -2635,7 +2658,7 @@ export default function Home() {
                           <div style={{ fontSize:11, color:'var(--warn-text)', marginBottom:8 }}>{t('上記の同意チェックが必要です')}</div>
                         )}
                         <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
-                          <button onClick={() => joinWaitlist(chgDate, effectiveChgGuests)} disabled={wlSubmitting || !privacyConsent}
+                          <button onClick={() => joinWaitlist(chgDate, effectiveChgGuests, chgTime)} disabled={wlSubmitting || !privacyConsent}
                             style={{ background:'#ff9800', color:'#fff', border:'none', borderRadius:6, padding:'9px 16px', fontSize:13, fontWeight:'bold', cursor:'pointer' }}>
                             {wlSubmitting ? t('登録中...') : t('キャンセル待ちに登録する')}
                           </button>
@@ -2680,7 +2703,7 @@ export default function Home() {
                         )}
                         <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
                           {featureFlags.waitlistEnabled && (
-                            <button onClick={() => joinWaitlist(chgDate, effectiveChgGuests)} disabled={wlSubmitting || !privacyConsent}
+                            <button onClick={() => joinWaitlist(chgDate, effectiveChgGuests, chgTime)} disabled={wlSubmitting || !privacyConsent}
                               style={{ background:'#ff9800', color:'#fff', border:'none', borderRadius:6, padding:'9px 16px', fontSize:13, fontWeight:'bold', cursor:'pointer' }}>
                               {wlSubmitting ? t('登録中...') : t('キャンセル待ちに登録する')}
                             </button>
