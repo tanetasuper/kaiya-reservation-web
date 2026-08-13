@@ -1110,6 +1110,15 @@ function SetupWizard({ onClose, onApply }) {
         {step === 'confirm' && preset && (
           <>
             <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:12 }}>この内容で設定します。コース一覧・営業時間・料金は変更されません（Q1・Q2の選択肢はこの業種向けの内容に変更されます）。</div>
+            {/* buildPresetPatchはpreset.settings/preset.fsetの該当セクションを丸ごとコピーする
+                （質問で答えた項目だけの差分ではない）。そのため、初回導入時ではなく既に運用中の
+                店舗がウィザードを再実行すると、質問には出てこない項目（呼び方以外のcapacityModel・
+                cutoffRules・通知セクション既定値等）まで含めて、運用中に個別カスタマイズした値が
+                無警告でプリセットの既定値に戻ってしまう（Apple CEO視点レビュー・ラウンド40での指摘、
+                今回警告文を追加して対応）。 */}
+            <div style={{ background:'var(--amber-bg)', border:'1px solid var(--amber-border)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'var(--amber-text)', marginBottom:12 }}>
+              ⚠️ 既にこの店舗の設定を個別にカスタマイズ済みの場合はご注意ください。この操作は「{preset.label}」プリセットの設定項目（容量管理方式・受付締切・通知の既定表示等、上記の質問に出てこない項目も含む）を丸ごと上書きします。初めての導入設定ではなく、運用中の設定を一部だけ見直したい場合は、ウィザードではなく「設定」「配信設定」タブから個別に変更することをおすすめします。
+            </div>
             <div style={{ background:'var(--bg-subtle)', borderRadius:10, padding:14, fontSize:13, color:'var(--text-primary)', lineHeight:1.8, marginBottom:12 }}>
               <div><b>業種：</b>{preset.label}</div>
               {(preset.questions || []).map(q => {

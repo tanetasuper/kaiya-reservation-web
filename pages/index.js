@@ -1831,6 +1831,7 @@ export default function Home() {
                     <button
                       className={`g-btn-k${isKasshiki ? ' sel' : ''}${kasshikiDisabled() || monthAvailLoading ? ' dis' : ''}`}
                       disabled={kasshikiDisabled() || monthAvailLoading}
+                      aria-pressed={isKasshiki}
                       onClick={() => {
                         if (kasshikiDisabled()) return
                         const n = parseInt(selGuest) || 0
@@ -1848,6 +1849,7 @@ export default function Home() {
                     <button
                       className={`g-btn-k${selGuest === 'konsult' ? ' sel' : ''}${konsultDisabled() || monthAvailLoading ? ' dis' : ''}`}
                       disabled={konsultDisabled() || monthAvailLoading}
+                      aria-pressed={selGuest === 'konsult'}
                       style={{ marginTop: 6 }}
                       onClick={() => {
                         if (konsultDisabled()) return
@@ -2197,7 +2199,7 @@ export default function Home() {
                 <div style={{ marginTop: 10 }}>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                     {[['weekly', t('毎週')], ['biweekly', t('隔週')], ['monthly', t('毎月')], ['custom', t('カスタム')]].map(([v, l]) => (
-                      <button key={v} className={`q-btn${recurringFrequency === v ? ' sel' : ''}`} onClick={() => setRecurringFrequency(v)} type="button">{l}</button>
+                      <button key={v} className={`q-btn${recurringFrequency === v ? ' sel' : ''}`} aria-pressed={recurringFrequency === v} onClick={() => setRecurringFrequency(v)} type="button">{l}</button>
                     ))}
                   </div>
                   {/* カスタム間隔（美容院の6〜8週間隔等、毎週/隔週/毎月の3択に収まらない利用パターンが
@@ -2526,8 +2528,8 @@ export default function Home() {
                     ) : lateReqId === res.id ? (
                       <div style={{ marginTop: 8, background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
                         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                          <button className={`q-btn${lateReqType === 'change' ? ' sel' : ''}`} onClick={() => setLateReqType('change')}>{t('変更したい')}</button>
-                          <button className={`q-btn${lateReqType === 'cancel' ? ' sel' : ''}`} onClick={() => setLateReqType('cancel')}>{t('キャンセルしたい')}</button>
+                          <button className={`q-btn${lateReqType === 'change' ? ' sel' : ''}`} aria-pressed={lateReqType === 'change'} onClick={() => setLateReqType('change')}>{t('変更したい')}</button>
+                          <button className={`q-btn${lateReqType === 'cancel' ? ' sel' : ''}`} aria-pressed={lateReqType === 'cancel'} onClick={() => setLateReqType('cancel')}>{t('キャンセルしたい')}</button>
                         </div>
                         <textarea rows={2} value={lateReqMsg} onChange={e => setLateReqMsg(e.target.value)}
                           placeholder={visitText('ご希望の内容（例：来店時間を19時に変更したい）')} />
@@ -2671,6 +2673,7 @@ export default function Home() {
                       <button key={n}
                         className={`g-btn${chgGuests === String(n) ? ' sel' : ''}${disabled ? ' dis' : ''}`}
                         disabled={disabled}
+                        aria-pressed={chgGuests === String(n)}
                         onClick={() => { if (!disabled) { setChgGuests(String(n)); setChgErr(''); setWlDone(false); setWlErr('') } }}>
                         {/* 単位が「名」固定でcountUnit設定（台・件等）を反映していなかった（残席表示・
                             単価表示は既にcountUnitを使っているのに、この人数選択ボタンだけ取り残されて
@@ -2872,11 +2875,11 @@ export default function Home() {
 
       {/* ── NOTES POPUP ── */}
       {showNotesPopup && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:500, display:'flex', alignItems:'flex-end', justifyContent:'center' }}>
+        <div role="dialog" aria-modal="true" aria-labelledby="notes-popup-title" style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:500, display:'flex', alignItems:'flex-end', justifyContent:'center' }}>
           <div style={{ background:'var(--white)', borderRadius:'16px 16px 0 0', padding:'24px 20px 36px', width:'100%', maxWidth:480, maxHeight:'80vh', overflowY:'auto' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-              <h2 style={{ fontSize:16, fontWeight:'bold', color:'var(--text)' }}>{t('⚠️ ご予約にあたっての注意事項')}</h2>
-              <button onClick={() => setShowNotesPopup(false)} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--hint)' }}>✕</button>
+              <h2 id="notes-popup-title" style={{ fontSize:16, fontWeight:'bold', color:'var(--text)' }}>{t('⚠️ ご予約にあたっての注意事項')}</h2>
+              <button onClick={() => setShowNotesPopup(false)} aria-label={t('閉じる')} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--hint)' }}>✕</button>
             </div>
             <div style={{ fontSize:13, color:'var(--sub)', lineHeight:1.9, whiteSpace:'pre-line', marginBottom:24 }}>
               {bookingNotes}
