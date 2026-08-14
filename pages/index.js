@@ -20,6 +20,9 @@ const STAY_MIN = 150
 // 消えるため、何日も前の古い入力が別の来店予定と混ざって復元される事故を避けられるから。
 const BOOKING_DRAFT_KEY = 'kaiya_booking_draft_v1'
 const BOOKING_DRAFT_MAX_AGE_MS = 6 * 60 * 60 * 1000 // 6時間より古い保存内容は日時選択などが現実味を失うため復元しない
+// 変更フロー（既存予約の日程・時間・人数を選び直す画面）向けの下書き。新規予約フローと全く同じ理由
+// （WebView破棄によるリロードでの入力消失、ランダム客層視点レビュー・ラウンド45での指摘）で追加。
+const CHANGE_DRAFT_KEY = 'kaiya_change_draft_v1'
 
 // 検索エンジン向けの構造化データ（JSON-LD）のschema.orgタイプが、業態を問わず常に汎用の'LocalBusiness'
 // 固定だった（累積指摘の総棚卸しでの指摘：汎用予約プラットフォーム化の本旨に反する）。管理画面の
@@ -1016,6 +1019,12 @@ export default function Home() {
       }).catch(() => {
         setMyRes([])
       }).finally(() => setMyResLoading(false))
+    } else if (restoreChangeDraftIfAny()) {
+      // 変更フローの下書きが残っていれば優先して復元する（新規予約の下書きと変更の下書きが
+      // 同時に残っているのは通常あり得ないが、万一両方残っていても、より最近まで操作していた
+      // 方＝変更フローを優先する方が実害が小さい。新規予約側の古い下書きはそのまま残しておき、
+      // 次回起動時にまだ有効期限内なら改めて判断される）。
+      setScreen('change')
     } else {
       restoreBookingDraftIfAny()
       setScreen('input')
@@ -1234,6 +1243,55 @@ export default function Home() {
     } catch {}
   }
 
+  // 上と全く同じ理由（WebView破棄によるリロードでの入力消失）が、変更フロー（screen==='change'、
+  // 既存予約の日程・時間・人数を選び直す画面）にも同様に当てはまるのに、新規予約フローの下書き
+  // 保存だけが対応しており変更フローには保存の仕組み自体が無かった（ランダム客層視点レビュー・
+  // ラウンド45での指摘：新規予約フローで直した教訓が別フローに横展開されていなかった過去のパターン
+  // の再発）。changingRes（変更対象の予約そのもの、myResの中から選んだ1件）は既にメモリ上に
+  // 保持済みの情報のため、再度サーバーへ問い合わせ直す必要はなく、丸ごと一緒に保存・復元すれば足りる。
+  // ゲスト利用時に変更・キャンセルAPIへ渡す電話番号・お名前（myResPhoneUsed/myResNameUsed）も、
+  // ゲストIDはセッションごとに使い捨てで本人確認に使えないため、これらを一緒に保存しないと復元後の
+  // 変更確定リクエストが本人特定できず失敗してしまう。
+  useEffect(() => {
+    if (screen !== 'change' || !changingRes) return
+    try {
+      sessionStorage.setItem(CHANGE_DRAFT_KEY, JSON.stringify({
+        savedAt: Date.now(),
+        changingRes, chgDate, chgTime, chgGuests, chgMsg,
+        myResPhoneUsed, myResNameUsed,
+      }))
+    } catch {}
+  }, [screen, changingRes, chgDate, chgTime, chgGuests, chgMsg, myResPhoneUsed, myResNameUsed])
+
+  function clearChangeDraft() {
+    try { sessionStorage.removeItem(CHANGE_DRAFT_KEY) } catch {}
+  }
+  // restoreBookingDraftIfAnyと同じくproceedAfterAuthから一度だけ呼ぶ。復元できた場合はtrueを返し、
+  // 呼び出し元がその後の画面遷移（'input'ではなく'change'にする）を判断できるようにする。
+  function restoreChangeDraftIfAny() {
+    try {
+      const raw = sessionStorage.getItem(CHANGE_DRAFT_KEY)
+      if (!raw) return false
+      const d = JSON.parse(raw)
+      if (!d || !d.savedAt || Date.now() - d.savedAt > BOOKING_DRAFT_MAX_AGE_MS || !d.changingRes || !d.changingRes.id) { clearChangeDraft(); return false }
+      setChangingRes(d.changingRes)
+      if (d.chgDate) setChgDate(d.chgDate)
+      if (d.chgTime) setChgTime(d.chgTime)
+      if (d.chgGuests) setChgGuests(d.chgGuests)
+      if (d.chgMsg) setChgMsg(d.chgMsg)
+      if (d.myResPhoneUsed) setMyResPhoneUsed(d.myResPhoneUsed)
+      if (d.myResNameUsed) setMyResNameUsed(d.myResNameUsed)
+      const now = new Date()
+      setCalYear(now.getFullYear())
+      setCalMonth(now.getMonth())
+      // 新規予約フローの復元（1233行目付近）と同じ理由で、残席状況は必ず取り直す（バックグラウンド中に
+      // 満席になっている可能性があるため、古い判定のまま変更を確定させない）。
+      if (d.chgDate) fetchAvailability(d.chgDate, d.chgTime || undefined, d.changingRes.course)
+      return true
+    } catch {}
+    return false
+  }
+
   // ===== バリデーション =====
   // エラー発生時、原因の項目までスクロールして分かりやすくする
   function scrollToCard(id) {
@@ -1272,15 +1330,26 @@ export default function Home() {
     if (!isValidPhoneFormat(phone)) return errAt('card-contact', t('電話番号の形式が正しくありません'))
     if (emailCollectionEnabled && isGuestMode && !String(email).trim()) return errAt('card-contact', t('メールアドレスを入力してください'))
     if (String(email).trim() && !isValidEmailFormat(email)) return errAt('card-contact', t('メールアドレスの形式が正しくありません'))
-    if (avail && !isKasshiki && selGuest) {
-      const n = parseInt(selGuest) || 0
-      if (capacityModel === 'perStaff') {
-        if (n >= 2 && !avail.canBook2to5) return errAt('card-guest', lang === 'en' ? `No ${staffLabel} available for this time slot` : `この時間帯はご案内できる${staffLabel}が見つかりません`)
-      } else if (n >= 2 && n > avail.remainingSeats) {
-        return errAt('card-guest', lang === 'en' ? `Only ${avail.remainingSeats} ${countUnit} remaining, so we can't accept a party of ${n}` : `残り${avail.remainingSeats}${countUnit}のため、${guestsWithUnit(n)}のご予約はお受けできません`)
+    if (!isKasshiki && selGuest) {
+      // avail（残席状況）がまだ読み込み中（avail===null）の間は、下の容量チェック自体が
+      // `if (avail && ...)` の条件により丸ごとスキップされ、何のエラーも出さずに確認画面へ
+      // 進めてしまっていた。普段は日付・時間を選んでから名前・電話番号等を入力する間に
+      // fetchAvailabilityが完了するため表面化しにくいが、下書き復元（restoreBookingDraftIfAny、
+      // 1213行目付近）直後は全項目が既に入力済みの状態で「確認画面へ」ボタンがそのまま押せてしまい、
+      // 復元直後に発行し直した残席確認（まだ回線の悪い端末では特に時間がかかる）が終わる前に
+      // お客様がタップすると、既に満席になっている可能性のある枠のまま素通りしてしまう
+      // （ランダム客層視点レビュー・ラウンド45での指摘）。読み込み中は明示的なエラーで止める。
+      if (availLoading) return errAt('card-guest', t('空き状況を確認中です。少し待ってからもう一度お試しください'))
+      if (avail) {
+        const n = parseInt(selGuest) || 0
+        if (capacityModel === 'perStaff') {
+          if (n >= 2 && !avail.canBook2to5) return errAt('card-guest', lang === 'en' ? `No ${staffLabel} available for this time slot` : `この時間帯はご案内できる${staffLabel}が見つかりません`)
+        } else if (n >= 2 && n > avail.remainingSeats) {
+          return errAt('card-guest', lang === 'en' ? `Only ${avail.remainingSeats} ${countUnit} remaining, so we can't accept a party of ${n}` : `残り${avail.remainingSeats}${countUnit}のため、${guestsWithUnit(n)}のご予約はお受けできません`)
+        }
+        if (n === 1 && !avail.canBook1)
+          return errAt('card-guest', guestUnit === '名' ? t('1名様のご予約はこの日はお受けできません') : (lang === 'en' ? `A single ${guestUnit} reservation is not available for this date` : `1${guestUnit}のご予約はこの日はお受けできません`))
       }
-      if (n === 1 && !avail.canBook1)
-        return errAt('card-guest', guestUnit === '名' ? t('1名様のご予約はこの日はお受けできません') : (lang === 'en' ? `A single ${guestUnit} reservation is not available for this date` : `1${guestUnit}のご予約はこの日はお受けできません`))
     }
     setInputErr('')
     // privacyConsentは入力画面上の他の同意チェックボックス（満席日のキャンセル待ちカード・貸切満席
@@ -1413,7 +1482,16 @@ export default function Home() {
   // ゲスト利用（LINEを使わない/使えないお客様）は、セッションごとに変わる仮のIDでは過去の予約を引けないため、
   // 電話番号を入力してもらい、それをキーに検索する（LINEユーザーは従来通りuserIdで自動検索）。
   async function openMyRes() {
-    await ensureHolidays()
+    // 「マイ予約」は入力画面から意図的に離れる操作（既存の予約を確認したいだけで、今の入力内容を
+    // 続けるつもりとは限らない）。ここでsessionStorageの下書きを消しておかないと、この後LIFFの
+    // WebViewが破棄される／お客様がLINEのトーク一覧経由で予約画面を開き直す等でページが再読み込み
+    // されると、restoreBookingDraftIfAny（1213行目付近）はscreen='input'に戻す際に必ず走るため、
+    // 「マイ予約を見に来ただけ」のはずが、次に始めるはずの新規予約の入力画面に古い日時・氏名等が
+    // 何の説明もなく勝手に入った状態で出てきてしまう（ランダム客層視点レビュー・ラウンド45での指摘）。
+    // 同一セッション内でこの画面下部の「← 戻る」を押して入力画面に戻るだけなら、Reactのstate自体は
+    // まだメモリ上に残っているため入力内容は失われず、screen==='input'に戻った時点の永続化useEffect
+    // （1194行目付近）がそのまま最新の内容をsessionStorageへ書き戻すので、ここで消しても支障はない。
+    clearBookingDraft()
     setMyRes([])
     setMyResErr('')
     setCancelId(null)
@@ -1604,6 +1682,7 @@ export default function Home() {
       })
       if (r.success) {
         setDone({ detail: baseDetail + t('\n\nLINEに変更確認メッセージをお送りしました。'), id: `${t('予約番号：')}${changingRes.id}`, pending: false, error: '', backScreen: 'chgconfirm', title: t('変更が完了しました') })
+        clearChangeDraft()
       } else {
         setDone(prev => ({ ...prev, pending: false, error: r.error || t('変更に失敗しました') }))
       }
@@ -2423,10 +2502,17 @@ export default function Home() {
                       guestCountEnabledがOFFの学習塾面談・面接（人数が常に1名固定＝合計計算は安全）まで
                       一律で総額を見せられなくなっていた。単価が人数に左右されない条件はcountUnit/guestCountEnabled
                       だけで既に十分なため、isSimpleModeは外す。 */}
+                  {/* 英語版だけ「visits」がハードコードされており、学習塾面談・面接等（来店ではなく
+                      レッスン/面談）で不自然だった（業種経営者陣視点レビュー・第45回：学習塾面談での
+                      定期予約合計表示ウォークスルーで発覚）。この機能はvisitNoun/visitNounEnで業態ごとに
+                      出し分けられるほど作り込まれておらず（visitNounEnはどのプリセットからも設定されない
+                      未使用フィールド）、上のOccurrences（t('回数')）・「その回だけ個別にご連絡します」
+                      （159行目付近）と同じ、既にアプリ全体で定期予約の単位として使っている業態非依存の
+                      語「occurrence(s)」に統一する。 */}
                   {(countUnit === '台' || !guestCountEnabled) && Number.isFinite(Number(visibleCourses[selCourse]?.price)) && (
                     <div style={{ fontSize: 12, color: 'var(--sub)', marginTop: 4, lineHeight: 1.7 }}>
                       {lang === 'en'
-                        ? `Total (approx.): ¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()} for ${recurringCount} visits`
+                        ? `Total (approx.): ¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()} for ${recurringCount} occurrence${recurringCount === 1 ? '' : 's'}`
                         : `合計（目安）：¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()}（${recurringCount}回分）`}
                     </div>
                   )}
@@ -2652,7 +2738,14 @@ export default function Home() {
                       </button>
                     )}
                     {seriesCancelConfirmId === res.seriesId && (
-                      <div className="cnl-confirm" style={{ marginTop: 6 }} role="alertdialog" aria-live="assertive" aria-labelledby={`cnl-msg-series-${res.seriesId}`}>
+                      /* role="alertdialog"はWAI-ARIA仕様上alertロールのサブクラスであり、
+                         aria-live="assertive"を暗黙値として既に持つ（役割自体がライブリージョンとして
+                         扱われる）。フォーカス移動（はいボタンへ）も併用しているため、明示的な
+                         aria-live="assertive"を残すとAT側でメッセージの二重読み上げ（ライブリージョン
+                         変化の通知＋フォーカス移動時のダイアログ名読み上げ）が起きるリスクがあった
+                         （Appleデザインチーム視点レビュー・ラウンド43-44で保留、ラウンド45で確定）。
+                         role="alertdialog"＋aria-labelledby＋フォーカス移動だけで十分なため明示指定は削除。 */
+                      <div className="cnl-confirm" style={{ marginTop: 6 }} role="alertdialog" aria-labelledby={`cnl-msg-series-${res.seriesId}`}>
                         <p className="cnl-msg" id={`cnl-msg-series-${res.seriesId}`}>{t('このシリーズの今後の予約をすべてキャンセルします。よろしいですか？')}</p>
                         <div className="cnl-btns">
                           <button className="cnl-yes" ref={el => { cnlYesRefs.current[`series-${res.seriesId}`] = el }} disabled={seriesCancelingId === res.seriesId}
@@ -2695,7 +2788,8 @@ export default function Home() {
                       </button>
                     </div>
                     {estimateConfirm?.id === res.id && (
-                      <div className="cnl-confirm" style={{ marginTop: 8 }} role="alertdialog" aria-live="assertive" aria-labelledby={`cnl-msg-estimate-${res.id}`}>
+                      /* 上のシリーズキャンセル確認と同じ理由でaria-live明示指定は削除（ラウンド45）。 */
+                      <div className="cnl-confirm" style={{ marginTop: 8 }} role="alertdialog" aria-labelledby={`cnl-msg-estimate-${res.id}`}>
                         <p className="cnl-msg" id={`cnl-msg-estimate-${res.id}`}>{estimateConfirm.accept ? t('この見積を承諾します。よろしいですか？') : visitText('この見積を辞退します。よろしいですか？（ご来店予約自体は継続します）')}</p>
                         <div className="cnl-btns">
                           <button className="cnl-yes" ref={el => { cnlYesRefs.current[`estimate-${res.id}`] = el }} disabled={estimateRespondingId === res.id}
@@ -2806,7 +2900,8 @@ export default function Home() {
                       <button className="btn-cnl" onClick={() => { setCancelId(res.id); setCancelErr('') }}>{t('キャンセル')}</button>
                     </div>
                     {cancelId === res.id && (
-                      <div className="cnl-confirm" role="alertdialog" aria-live="assertive" aria-labelledby={`cnl-msg-cancel-${res.id}`}>
+                      /* 上のシリーズキャンセル確認と同じ理由でaria-live明示指定は削除（ラウンド45）。 */
+                      <div className="cnl-confirm" role="alertdialog" aria-labelledby={`cnl-msg-cancel-${res.id}`}>
                         <p className="cnl-msg" id={`cnl-msg-cancel-${res.id}`}>{t('本当にキャンセルしますか？')}</p>
                         <div className="cnl-btns">
                           <button className="cnl-yes" ref={el => { cnlYesRefs.current[`cancel-${res.id}`] = el }} disabled={cancelingId === res.id} onClick={() => execCancel(res.id)}>
@@ -3065,11 +3160,21 @@ export default function Home() {
               if (deadlinePassed(chgDate)) { setChgErr(t('選択された日付は予約受付期限を過ぎています')); return scrollToCard('card-chg-date') }
               if (!chgTime) { setChgErr(visitText('新しい来店時間を選択してください')); return scrollToCard('card-chg-time') }
               if (guestCountEnabled && !chgGuests) { setChgErr(t('人数を選択してください')); return scrollToCard('card-chg-guest') }
+              // 復元直後にお客様が即座にタップした場合、残席の再確認（restoreChangeDraftIfAny内の
+              // fetchAvailability）がまだ終わっていない可能性があり、goConfirm（1300行目付近）で
+              // 直した理由と全く同じレースコンディションがここにもある（ランダム客層視点レビュー・
+              // ラウンド45での指摘）。
+              if (availLoading) { setChgErr(t('空き状況を確認中です。少し待ってからもう一度お試しください')); return }
               setChgErr('')
               setScreen('chgconfirm')
             }}>{t('確認へ')}</button>
             <div className="mt8">
-              <button className="btn-s" onClick={() => { setAvail(null); setAvailErr(''); setScreen('myres') }}>{t('← 戻る')}</button>
+              {/* 「← 戻る」でマイ予約に戻るのは、この変更を一旦保留する意図的な操作。ここで下書きを
+                  消しておかないと、この後WebViewが破棄される／LIFFを開き直す等でページが再読み込み
+                  されるとrestoreChangeDraftIfAny（1213行目付近）が必ず走り、「マイ予約を見るだけ」の
+                  つもりが次に開いた時にまた同じ変更フォームへ古い内容ごと連れ戻されてしまう
+                  （openMyRes、1426行目付近と同じ理由・ランダム客層視点レビュー・ラウンド45での指摘）。 */}
+              <button className="btn-s" onClick={() => { setAvail(null); setAvailErr(''); clearChangeDraft(); setScreen('myres') }}>{t('← 戻る')}</button>
             </div>
           </div>
         </div>
@@ -3134,7 +3239,13 @@ export default function Home() {
           <div style={{ background:'var(--white)', borderRadius:'16px 16px 0 0', padding:'24px 20px 36px', width:'100%', maxWidth:480, maxHeight:'80vh', overflowY:'auto' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
               <h2 id="notes-popup-title" style={{ fontSize:16, fontWeight:'bold', color:'var(--text)' }}>{t('⚠️ ご予約にあたっての注意事項')}</h2>
-              <button onClick={() => setShowNotesPopup(false)} aria-label={t('閉じる')} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--hint)' }}>✕</button>
+              {/* アイコンのみの閉じるボタンが、他の同種アイコンボタン（再試行ボタン等、1897・2925行目付近）
+                  には既にあるminHeight/minWidth:44（タッチターゲットサイズ）を持たず、実際のクリック
+                  可能領域がフォントサイズ22px相当（見た目の✕とほぼ同じ）しか無かった
+                  （Appleデザインチーム視点レビュー・ラウンド45での指摘）。他のアイコンボタンと同じ
+                  44×44の最小タッチターゲットに揃える。 */}
+              <button onClick={() => setShowNotesPopup(false)} aria-label={t('閉じる')}
+                style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--hint)', minWidth:44, minHeight:44, display:'inline-flex', alignItems:'center', justifyContent:'center' }}>✕</button>
             </div>
             <div style={{ fontSize:13, color:'var(--sub)', lineHeight:1.9, whiteSpace:'pre-line', marginBottom:24 }}>
               {bookingNotes}

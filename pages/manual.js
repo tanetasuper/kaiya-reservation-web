@@ -63,6 +63,14 @@ function ManualContent({ s, loadErr }) {
   const guestCountOn = !s || s.guestCountEnabled !== false
   const waitlistOn = !!(s && s.featureFlags && s.featureFlags.waitlistEnabled)
   const kasshikiOn = !!(s && s.featureFlags && s.featureFlags.kasshikiEnabled)
+  // Code.gs側のgetSettingsコメントの通り、この2つはスタッフマニュアルの機能一覧に載せるために
+  // featureFlagsへ追加されたが、追加当時この一覧（catalog）自体への反映が漏れていた
+  // （汎用化テスト・ラウンド45での指摘：オフの機能どころか機能の存在自体が一覧から丸ごと欠落していた）。
+  const estimateFlowOn = !!(s && s.featureFlags && s.featureFlags.estimateFlowEnabled)
+  const recurringBookingOn = !!(s && s.featureFlags && s.featureFlags.recurringBookingEnabled)
+  // 複数担当者同時アサイン（admin.jsのEditModal）はON/OFFの設定トグルを持たず、staffAssignmentEnabledかつ
+  // 担当者が2名以上登録されている場合に常に使える機能のため、機能一覧には載せず（③編集の案内文でのみ言及）。
+  const multiStaffOn = staffOn && !!(s && Array.isArray(s.staffRoster) && s.staffRoster.length > 1)
   const bizName = (s && s.restaurantName) || '店舗'
   // 導入ウィザード（admin.js）で業種ごとに設定できる呼び方（スタイリスト・整備士・車両等）。
   // admin.js側の画面表示もこの値を使うようになったため、マニュアルもここに合わせて一致させる。
@@ -91,6 +99,8 @@ function ManualContent({ s, loadErr }) {
     ...(s.capacityModel !== 'perStaff' ? [
       { name: '1名利用は相席時のみ受付', on: !!(s.featureFlags && s.featureFlags.singleDinerRequiresCompanyEnabled), desc: 'ONの場合、1名様のご予約は他のお客様の予約が既にある日のみ受付する' },
     ] : []),
+    { name: '定期予約（シリーズ予約）', on: recurringBookingOn, desc: '同じ内容の予約を複数回分まとめてお申し込みいただけるようにする（美容院の定期施術・車検の点検等）' },
+    { name: '見積・承認フロー', on: estimateFlowOn, desc: '来店前に金額が確定しない業態向けに、見積金額を提示してお客様の承諾を待てるようにする（承諾後の作業完了通知も含む）' },
     { name: 'キャンセル待ち', on: waitlistOn, desc: '満席の日にお客様がキャンセル待ちに登録できるようにする' },
     { name: '期限後の変更・キャンセル依頼', on: !!(s.featureFlags && s.featureFlags.lateRequestEnabled), desc: '受付期限を過ぎた後も、お客様から店舗への依頼だけは送れるようにする' },
     { name: '増枠（繁忙期の上限を一時的に増やす）', on: !!(s.capacityBoosts && s.capacityBoosts.length > 0), desc: '設定タブで期間を指定して上限を一時的に増やす' },
@@ -243,6 +253,30 @@ function ManualContent({ s, loadErr }) {
                 </div>
               </div>
             </>
+          )}
+          {estimateFlowOn && (
+            <div className="callout tip">
+              <span className="icon">💰</span>
+              <div>
+                来店前に金額が確定しない業態向けに、編集画面には<b>「見積」</b>欄があります。金額（必要なら部品代・工賃の内訳）を入力して<b>「見積を送る（お客様に通知されます）」</b>を押すと、お客様にLINE・メールで通知が届き、お客様は自分の画面から<b>承諾・辞退</b>を選べます（辞退してもご来店の予約自体は取り消されません）。承諾された後は<b>「作業完了を通知（お引き取り案内）」</b>を押して、対応が終わったことをお知らせしてください。
+              </div>
+            </div>
+          )}
+          {recurringBookingOn && (
+            <div className="callout tip">
+              <span className="icon">🔁</span>
+              <div>
+                定期予約（シリーズ予約）の各回には<b>「🔁 定期予約（シリーズ）」</b>欄が表示されます。今回だけキャンセルしたい場合は通常の予約と同じくステータスを「キャンセル」に変更してください。今後の回もまとめてキャンセルしたい場合は<b>「このシリーズの今後の予約をまとめてキャンセル」</b>を押します（本日より前の回・既にキャンセル済みの回には影響しません）。
+              </div>
+            </div>
+          )}
+          {multiStaffOn && (
+            <div className="callout tip">
+              <span className="icon">👥</span>
+              <div>
+                1件の予約に主担当（ご指名）以外の{itemPeople}も同時に必要な場合は、編集画面の<b>「全員が同時に必要な追加担当者」</b>で該当する{itemPeople}にチェックを入れてください（例：カラー施術で主担当スタイリスト＋アシスタント）。誰でもよい場合は<b>「誰か1人でよい追加担当者（柔軟な候補）」</b>で候補を複数チェックすると、そのうち空いている1人が自動的に割り当てられます。
+              </div>
+            </div>
           )}
         </section>
 
