@@ -1509,9 +1509,9 @@ export default function Admin() {
         setMyRole(role)
         setAuthed(true)
       } else if (r.locked) {
-        setLoginErr(r.error || 'ログイン試行回数が多すぎます。しばらく時間をおいて再度お試しください。')
+        setLoginErr(friendlyServerError(r, 'ログイン試行回数が多すぎます。しばらく時間をおいて再度お試しください。'))
       } else {
-        setLoginErr(r.error || 'パスワードが正しくありません')
+        setLoginErr(friendlyServerError(r, 'パスワードが正しくありません'))
       }
     } catch { setLoginErr('通信エラーが発生しました。もう一度お試しください') }
     setLoggingIn(false)
@@ -1550,7 +1550,7 @@ export default function Admin() {
         setLoginPw('')
         setRecoveryCode('')
       } else {
-        setRecoveryMsg({ text: r.error || '答えが正しくありません', ok:false })
+        setRecoveryMsg({ text: friendlyServerError(r, '答えが正しくありません'), ok:false })
       }
     } catch { setRecoveryMsg({ text:'通信エラーが発生しました。もう一度お試しください', ok:false }) }
     setRecovering(false)
@@ -4327,7 +4327,7 @@ export default function Admin() {
                         setAdminPassword(pwNew)
                         setPwCurrent(''); setPwNew('')
                       }
-                      else setPwMsg({text:r.error||'変更に失敗しました',ok:false})
+                      else setPwMsg({text:friendlyServerError(r, '変更に失敗しました'),ok:false})
                     } catch { setPwMsg({text:'通信エラーが発生しました。もう一度お試しください',ok:false}) }
                     setPwChanging(false)
                   }} style={{ ...btnGreen, opacity:pwChanging?0.7:1 }}>
@@ -4368,7 +4368,7 @@ export default function Admin() {
                       try {
                         const r = await api.changeRecoveryQA(rcCurrent, qaQuestion, qaAnswer)
                         if (r.success) { setRcMsg({text:'秘密の合言葉を変更しました',ok:true}); setRcCurrent(''); setQaQuestion(''); setQaAnswer('') }
-                        else setRcMsg({text:r.error||'変更に失敗しました',ok:false})
+                        else setRcMsg({text:friendlyServerError(r, '変更に失敗しました'),ok:false})
                       } catch { setRcMsg({text:'通信エラーが発生しました。もう一度お試しください',ok:false}) }
                       setRcChanging(false)
                     }} style={{ ...btnGray, fontSize:13 }}>
