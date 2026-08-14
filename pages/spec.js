@@ -58,12 +58,18 @@ export default function Spec() {
         </Head>
         <div className="gate">
           <form onSubmit={submit} className="gate-card">
-            <div className="gate-icon">📐</div>
+            <div className="gate-icon" aria-hidden="true">📐</div>
             <h1>システム仕様書</h1>
             <p>開発権限のある方のみ閲覧できます</p>
+            {/* index.js/admin.jsのお名前・電話番号欄と同じく、可視ラベルを持たずplaceholderのみに
+                頼っている入力欄にはaria-labelを添える（Appleデザインチーム視点レビュー・ラウンド50
+                での指摘）。 */}
             <input type="password" value={pw} onChange={e => setPw(e.target.value)}
-              placeholder="パスワード" autoFocus />
-            {err && <div className="gate-err">{err}</div>}
+              placeholder="パスワード" aria-label="パスワード" autoFocus />
+            {/* index.js/admin.jsのinputErr等と同じrole="alert"（暗黙のaria-live="assertive"）を付与
+                （Appleデザインチーム視点レビュー・ラウンド50での指摘：この画面唯一のエラーなのに
+                役割が無く、スクリーンリーダー利用者にはパスワード誤りが伝わらなかった）。 */}
+            {err && <div className="gate-err" role="alert" aria-live="assertive">{err}</div>}
             <button type="submit" disabled={busy}>{busy ? '確認中...' : '開く'}</button>
           </form>
         </div>
@@ -263,7 +269,10 @@ function SpecContent({ content, onLock }) {
         code { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans Mono",monospace; font-size: 0.92em; }
         :global(.pill) { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }
         :global(.pill.ok) { background: #E3F1E8; color: #2E7D4F; }
-        :global(.pill.pending) { background: #FBEBD2; color: #B8791A; }
+        /* 旧color:#B8791Aは背景#FBEBDに対し約3.1:1で、12px太字（WCAG 1.4.3の「大きな文字」の
+           基準である14pt太字・18pt通常のいずれにも満たない）にはWCAG AAの4.5:1が必要なところ
+           未達だった（Appleデザインチーム視点レビュー・ラウンド50での指摘）。同系色のまま濃くする。 */
+        :global(.pill.pending) { background: #FBEBD2; color: #8F5C0F; }
         :global(.pill.off) { background: #FBE4E2; color: #A23E3E; }
         .bar { background: #1B2430; color: #F5F7FA; text-align: center; font-size: 12.5px; padding: 9px 14px; display: flex; align-items: center; justify-content: center; gap: 14px; }
         .bar .lock { background: none; border: 1px solid #47536280; color: #F5F7FA; font-size: 11px; padding: 3px 10px; border-radius: 20px; cursor: pointer; }
@@ -299,7 +308,12 @@ function SpecContent({ content, onLock }) {
         .d-row { display: flex; gap: 10px; width: 100%; justify-content: center; }
         .d-row.three { align-items: stretch; }
         .d-box { border: 1.5px solid #DCE1E8; border-radius: 10px; padding: 12px 16px; text-align: center; font-size: 13px; background: #F8FAFD; flex: 1; }
-        .d-box small { display: block; color: #6B7688; font-size: 11.5px; margin-top: 4px; font-weight: normal; }
+        /* 旧color:#6B7688は、この構成図の3種の背景（既定#F8FAFD／.vercelの#E4ECF8／.gas.mainの
+           #E3F1E8／.gas.subの#FBEBD2）いずれに対しても3.86〜4.39:1で、11.5pxの通常文字に必要な
+           WCAG AAの4.5:1に届いていなかった（他の.meta/.side a等と同じ色をここにも流用していたが、
+           それらの白背景では4.59:1で足りていたため見落とされていた。Appleデザインチーム視点
+           レビュー・ラウンド50での指摘）。4色すべてで4.5:1を満たす濃さに個別で上書きする。 */
+        .d-box small { display: block; color: #566173; font-size: 11.5px; margin-top: 4px; font-weight: normal; }
         .d-box.client { max-width: 320px; }
         .d-box.vercel { max-width: 480px; background: #E4ECF8; border-color: #2A5AA0; }
         .d-box.gas.main { background: #E3F1E8; border-color: #2E7D4F; }
@@ -325,7 +339,11 @@ function SpecContent({ content, onLock }) {
           .hero { background: #161C25; border-color: #29323F; }
           .hero p { color: #B7C1CC; }
           .eyebrow { color: #6E9EDB; }
-          .meta, .side a, .l, .desc, .lead, footer, .d-box small { color: #7C879A; }
+          .meta, .side a, .l, .desc, .lead, footer { color: #7C879A; }
+          /* ダーク側も同じ理由（上のライトモード側コメント参照）で、.vercel/.gas.main/.gas.subの
+             背景に対して3.90〜4.26:1しか出ず未達だったため、.d-box smallだけ分離して個別に
+             上書きする（ラウンド50での指摘）。 */
+          .d-box small { color: #8B96A8; }
           .side a:hover { color: #6E9EDB; border-left-color: #6E9EDB; }
           .card, .d-box { background: #161C25; border-color: #29323F; }
           th, td { border-color: #29323F; }

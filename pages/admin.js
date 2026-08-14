@@ -142,7 +142,7 @@ const WEEK       = ['日','月','火','水','木','金','土']
 // あった（ITコンサル視点レビューでの指摘）。許可リストから外し、書き出し・読み込みの両方で対象外にする。
 const TEMPLATE_SETTINGS_KEYS = [
   'maxSeats', 'courses', 'timeRanges', 'dailyHours', 'cutoffRules', 'seatsByWeekday', 'capacityModel',
-  'q1Options', 'q3Options', 'q1Question', 'q3Question', 'bookingSources', 'bookingMode', 'itemLabel', 'itemIcon', 'staffAssignmentEnabled', 'staffLabel', 'countUnit', 'visitNoun', 'guestCountEnabled',
+  'q1Options', 'q3Options', 'q1Question', 'q3Question', 'bookingSources', 'bookingMode', 'itemLabel', 'itemIcon', 'staffAssignmentEnabled', 'staffLabel', 'countUnit', 'visitNoun', 'estimatePartsLabel', 'estimateLaborLabel', 'guestCountEnabled',
   'fixedGuestCount', 'companionInfoEnabled', 'defaultStayMin', 'defaultCourseName', 'unparseableGuestFallback',
   'emailCollectionEnabled', 'enabledLanguages',
 ]
@@ -522,7 +522,7 @@ function useModalFocusTrap(containerRef, closeBtnRef, onClose) {
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────
-function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, dateOverrides, staffAssignmentEnabled, staffRoster, courses, itemLabel, visitNoun, bookingSources, guestCountEnabled, fixedGuestCount, maxSeats, estimateFlowEnabled }) {
+function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, dateOverrides, staffAssignmentEnabled, staffRoster, courses, itemLabel, visitNoun, bookingSources, guestCountEnabled, fixedGuestCount, maxSeats, estimateFlowEnabled, estimatePartsLabel, estimateLaborLabel }) {
   // フォーカストラップ用（上のuseModalFocusTrap参照）。closeBtnRefは開いた瞬間の初期フォーカス先も兼ねる。
   const modalRef = useRef(null)
   const closeBtnRef = useRef(null)
@@ -789,22 +789,24 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
           {estimateStatus && (
             <div style={{ fontSize:12, color:'var(--text-secondary)', marginBottom:8 }}>
               現在の状態：<b>{estimateStatus}</b>{res.estimateAmount ? `（¥${(parseFloat(res.estimateAmount)||0).toLocaleString()}）` : ''}
-              {(res.estimatePartsAmount && res.estimateLaborAmount) ? `　部品代：¥${(parseFloat(res.estimatePartsAmount)||0).toLocaleString()} ／ 工賃：¥${(parseFloat(res.estimateLaborAmount)||0).toLocaleString()}` : ''}
+              {(res.estimatePartsAmount && res.estimateLaborAmount) ? `　${estimatePartsLabel || '部品代'}：¥${(parseFloat(res.estimatePartsAmount)||0).toLocaleString()} ／ ${estimateLaborLabel || '工賃'}：¥${(parseFloat(res.estimateLaborAmount)||0).toLocaleString()}` : ''}
             </div>
           )}
           {estimateFlowEnabled ? (
             <>
               {/* 部品代・工賃の内訳（車修理工場向け、業種経営者陣視点レビュー・2026-08-13の指摘で新設）。
                   任意項目のため、他業態は空欄のままでよい。両方入力すると見積金額を自動計算する
-                  （手動で上書きも可能、内訳無しで総額だけ入れたい使い方は変わらない）。 */}
+                  （手動で上書きも可能、内訳無しで総額だけ入れたい使い方は変わらない）。
+                  ラベル自体は店舗設定（estimatePartsLabel/estimateLaborLabel）に差し替え可能
+                  （ラウンド50、業種経営者陣視点レビュー・ラウンド49での指摘を受けて設定化）。 */}
               <div className="modalGrid">
-                <Field label="部品代（円・任意）">
+                <Field label={`${estimatePartsLabel || '部品代'}（円・任意）`}>
                   <input type="number" min="0" value={estimatePartsAmount} style={mIStyle} onChange={e => {
                     const v = e.target.value; setEstimatePartsAmount(v)
                     if (v && estimateLaborAmount) setEstimateAmount(String((parseFloat(v)||0) + (parseFloat(estimateLaborAmount)||0)))
                   }} />
                 </Field>
-                <Field label="工賃（円・任意）">
+                <Field label={`${estimateLaborLabel || '工賃'}（円・任意）`}>
                   <input type="number" min="0" value={estimateLaborAmount} style={mIStyle} onChange={e => {
                     const v = e.target.value; setEstimateLaborAmount(v)
                     if (v && estimatePartsAmount) setEstimateAmount(String((parseFloat(estimatePartsAmount)||0) + (parseFloat(v)||0)))
@@ -1448,7 +1450,7 @@ export default function Admin() {
     q1Options:['誕生日・記念日', '接待・会食', '友人・仲間と', '家族で', 'デート', 'その他'],
     q3Options:['グーグルマップ', 'インターネット検索', '食べログ', 'SNS', '知人の紹介', 'その他'],
     q1Question:'ご利用目的（任意）', q3Question:'どのように当店を知りましたか（任意）',
-    bookingMode:'course', itemLabel:'コース', itemIcon:'🍽', staffAssignmentEnabled:false, staffLabel:'担当者', countUnit:'名', visitNoun:'来店', storeSpecificNotifSections:[], bookingSources:SOURCES_DINING, staffRoster:[], guestCountEnabled:true, fixedGuestCount:'1', companionInfoEnabled:true, defaultStayMin:150, defaultCourseName:'コース名', unparseableGuestFallback:8, emailCollectionEnabled:false, enabledLanguages:['ja'],
+    bookingMode:'course', itemLabel:'コース', itemIcon:'🍽', staffAssignmentEnabled:false, staffLabel:'担当者', countUnit:'名', visitNoun:'来店', estimatePartsLabel:'部品代', estimateLaborLabel:'工賃', storeSpecificNotifSections:[], bookingSources:SOURCES_DINING, staffRoster:[], guestCountEnabled:true, fixedGuestCount:'1', companionInfoEnabled:true, defaultStayMin:150, defaultCourseName:'コース名', unparseableGuestFallback:8, emailCollectionEnabled:false, enabledLanguages:['ja'],
     adBannerEnabled:false, adBannerImageUrl:'', adBannerText:'', adBannerLinkUrl:'', adBannerPlacements:['done'], storeImageUrl:'',
     adminNotifyChannel:'line', adminAlertEmail:'' })
   const resCacheRef = useRef({})
@@ -2211,6 +2213,8 @@ export default function Admin() {
           staffLabel: r.staffLabel || '担当者',
           countUnit: r.countUnit || '名',
           visitNoun: r.visitNoun || '来店',
+          estimatePartsLabel: r.estimatePartsLabel || '部品代',
+          estimateLaborLabel: r.estimateLaborLabel || '工賃',
           storeSpecificNotifSections: Array.isArray(r.storeSpecificNotifSections) ? r.storeSpecificNotifSections : [],
           bookingSources: Array.isArray(r.bookingSources) && r.bookingSources.length > 0 ? r.bookingSources : ['電話','LINE','ウォークイン','その他'],
           guestCountEnabled: r.guestCountEnabled === undefined ? true : !!r.guestCountEnabled,
@@ -3810,6 +3814,28 @@ export default function Admin() {
                         style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
                       <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>予約画面・LINE通知・メールの「ご来店」等の文言に使われます（クリニックなら「来院」、面接なら「来訪」等）</div>
                     </div>
+                    {/* 見積の内訳（部品代・工賃）は車修理工場を想定した固定の日本語文言のまま全業態に出続けていた
+                        （業種経営者陣視点レビュー・ラウンド49で指摘、ラウンド50で設定化）。見積/承認フローを
+                        使わない店舗には無関係な設定のため、fset.estimateFlow.enabledがONの店舗にだけ表示する
+                        （itemLabel/visitNounのように常時表示すると、無関係な店舗にまで見積特有の項目が
+                        紛れ込んでしまうため）。 */}
+                    {fset.estimateFlow.enabled && (
+                      <>
+                        <div>
+                          <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>見積内訳「部品代」の呼び方（材料代・処置料等に変更可）</label>
+                          <input value={settings.estimatePartsLabel} onChange={e => setSettings(s => ({ ...s, estimatePartsLabel: e.target.value }))}
+                            placeholder="部品代"
+                            style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>見積内訳「工賃」の呼び方（施術料・診察料等に変更可）</label>
+                          <input value={settings.estimateLaborLabel} onChange={e => setSettings(s => ({ ...s, estimateLaborLabel: e.target.value }))}
+                            placeholder="工賃"
+                            style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
+                          <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>見積の入力欄・お客様への見積案内（LINE・メール・マイ予約画面）に使われます</div>
+                        </div>
+                      </>
+                    )}
                     {settings.bookingMode === 'simple' && (
                       <>
                         <div>
@@ -5138,6 +5164,8 @@ export default function Admin() {
           courses={settings.courses || []}
           itemLabel={settings.itemLabel || 'コース'}
           visitNoun={settings.visitNoun || '来店'}
+          estimatePartsLabel={settings.estimatePartsLabel || '部品代'}
+          estimateLaborLabel={settings.estimateLaborLabel || '工賃'}
           bookingSources={settings.bookingSources || SOURCES}
           guestCountEnabled={settings.guestCountEnabled}
           fixedGuestCount={settings.fixedGuestCount}

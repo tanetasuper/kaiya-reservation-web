@@ -81,6 +81,11 @@ function ManualContent({ s, loadErr }) {
   // （汎用化テスト・ラウンド46での指摘：以前は「来店」に固定していたが、クリニック等がONにした場合に
   // admin.js側の表記（ご来院）と食い違っていた）、ここも他の箇所と同じくvisitNounを使う。
   const visitNoun = (s && s.visitNoun) || '来店'
+  // 見積内訳（部品代・工賃）は車修理工場を想定した固定の日本語文言のまま全業態向けマニュアルに
+  // 出続けていた（業種経営者陣視点レビュー・ラウンド49で指摘、ラウンド50で設定化）。visitNoun等と
+  // 同じくCode.gs側のgetSettingsが返す値をそのまま使う。
+  const estimatePartsLabel = (s && s.estimatePartsLabel) || '部品代'
+  const estimateLaborLabel = (s && s.estimateLaborLabel) || '工賃'
 
   // 章番号（TOC・各章の見出し番号）を、実際に表示される章だけを数えて動的に振り直す。
   // 以前は⑤⑥（キャンセル待ち／臨時休み）が固定の番号で、機能がOFFの店舗ではその番号が
@@ -143,7 +148,7 @@ function ManualContent({ s, loadErr }) {
       <div className="wrap">
         {loadErr && (
           <div className="callout warn" style={{ marginTop: 24 }}>
-            <span className="icon">⚠️</span>
+            <span className="icon" aria-hidden="true">⚠️</span>
             <div>店舗設定を読み込めなかったため、この店舗固有の表示調整ができていません。以下は共通の操作方法です。</div>
           </div>
         )}
@@ -160,7 +165,7 @@ function ManualContent({ s, loadErr }) {
             </tbody>
           </table>
           <div className="callout tip">
-            <span className="icon">💡</span>
+            <span className="icon" aria-hidden="true">💡</span>
             <div><b>個人アカウントを作っていない場合</b>は、お名前欄は空欄のままで大丈夫です。これまで通り共通パスワードだけでログインできます。何も変わりません。</div>
           </div>
           <ol className="steps">
@@ -188,7 +193,7 @@ function ManualContent({ s, loadErr }) {
               実際には青いマス目は存在しない）。上の表から外し、詳細パネルの説明として案内し直す。 */}
           <p>日付をタップすると、その日の予約一覧{s && s.capacityModel !== 'perStaff' && '・残数'}{waitlistOn && '・キャンセル待ちの件数'}が表示され、その日だけ営業時間を変更している場合は<span className="badge b-blue">営業時間変更あり</span>のバッジも出ます。「🔄 最新の予約に更新」を押すと、他のスタッフが今入れた予約もすぐ反映されます。</p>
           <div className="callout tip">
-            <span className="icon">💡</span>
+            <span className="icon" aria-hidden="true">💡</span>
             <div>ご{visitNoun}日から<b>35日以上前</b>の予約は、一覧が長くなりすぎないよう自動的に別の記録（アーカイブ）に移動し、この一覧には出てこなくなります。古いご予約について問い合わせがあった場合は、店長にご相談ください（データダウンロード機能で確認できます）。</div>
           </div>
           <p>個々の予約にも、電話対応や当日の判断の参考になる印が付きます。</p>
@@ -228,7 +233,7 @@ function ManualContent({ s, loadErr }) {
             <li><span className="label">「予約を登録する」を押す</span><span className="detail">空きがあれば通常どおり保存されます。</span></li>
           </ol>
           <div className="callout warn">
-            <span className="icon">⚠️</span>
+            <span className="icon" aria-hidden="true">⚠️</span>
             <div>
               満席・休業日などの制限に引っかかると、<b>「強制登録（休業日を無視）」</b>というチェックボックスを使うよう案内が出ることがあります。これは<b>本来の制限を無視して無理に登録する</b>機能です。常連のお得意様の特別対応や、システムの都合と実際のお店の状況がズレている場合にのみ使ってください。使う前に一声、店長に確認するのがおすすめです。
             </div>
@@ -253,7 +258,7 @@ function ManualContent({ s, loadErr }) {
             <>
               <p className="detail" style={{ color: 'var(--muted)', fontSize: 13 }}>貸切予約が入っている日は、他の予約が自動的にブロックされます（同席不可）。</p>
               <div className="callout warn">
-                <span className="icon">⏳</span>
+                <span className="icon" aria-hidden="true">⏳</span>
                 <div>
                   貸切・大人数のご相談としてお客様が予約すると、ステータスが<b>「要確認」</b>のまま登録されます（予約一覧では「要確認（承認待ち）」の印が付きます）。内容を確認して問題なければ、予約の編集画面からステータスを<b>「確定」</b>に変更してください。「要確認」のままだと、お客様への確定案内が送られません。確定に変えるとLINE登録済みの方にはLINEで、メールアドレスが登録されている方にはメールでも案内が届きます（LINE・メール両方登録している方には両方に届きます。重複ではなく仕様です）。LINE・メールどちらも登録が無い電話予約のお客様には、お手数ですが確定した旨を電話でご連絡ください。
                 </div>
@@ -262,15 +267,15 @@ function ManualContent({ s, loadErr }) {
           )}
           {estimateFlowOn && (
             <div className="callout tip">
-              <span className="icon">💰</span>
+              <span className="icon" aria-hidden="true">💰</span>
               <div>
-                {visitNoun}前に金額が確定しない業態向けに、編集画面には<b>「見積」</b>欄があります。金額（必要なら部品代・工賃の内訳）を入力して<b>「見積を送る（お客様に通知されます）」</b>を押すと、お客様にLINE・メールで通知が届き、お客様は自分の画面から<b>承諾・辞退</b>を選べます（辞退してもご{visitNoun}の予約自体は取り消されません）。承諾された後は<b>「作業完了を通知（お引き取り案内）」</b>を押して、対応が終わったことをお知らせしてください。
+                {visitNoun}前に金額が確定しない業態向けに、編集画面には<b>「見積」</b>欄があります。金額（必要なら{estimatePartsLabel}・{estimateLaborLabel}の内訳）を入力して<b>「見積を送る（お客様に通知されます）」</b>を押すと、お客様にLINE・メールで通知が届き、お客様は自分の画面から<b>承諾・辞退</b>を選べます（辞退してもご{visitNoun}の予約自体は取り消されません）。承諾された後は<b>「作業完了を通知（お引き取り案内）」</b>を押して、対応が終わったことをお知らせしてください。
               </div>
             </div>
           )}
           {recurringBookingOn && (
             <div className="callout tip">
-              <span className="icon">🔁</span>
+              <span className="icon" aria-hidden="true">🔁</span>
               <div>
                 定期予約（シリーズ予約）の各回には<b>「🔁 定期予約（シリーズ）」</b>欄が表示されます。今回だけキャンセルしたい場合は通常の予約と同じくステータスを「キャンセル」に変更してください。今後の回もまとめてキャンセルしたい場合は<b>「このシリーズの今後の予約をまとめてキャンセル」</b>を押します（本日より前の回・既にキャンセル済みの回には影響しません）。
               </div>
@@ -278,7 +283,7 @@ function ManualContent({ s, loadErr }) {
           )}
           {multiStaffOn && (
             <div className="callout tip">
-              <span className="icon">👥</span>
+              <span className="icon" aria-hidden="true">👥</span>
               <div>
                 1件の予約に主担当（ご指名）以外の{itemPeople}も同時に必要な場合は、編集画面の<b>「全員が同時に必要な追加担当者」</b>で該当する{itemPeople}にチェックを入れてください（例：カラー施術で主担当スタイリスト＋アシスタント）。誰でもよい場合は<b>「誰か1人でよい追加担当者（柔軟な候補）」</b>で候補を複数チェックすると、そのうち空いている1人が自動的に割り当てられます。
               </div>
@@ -299,7 +304,7 @@ function ManualContent({ s, loadErr }) {
                   注記が無く、キャンセル待ちへの対応方法をスタッフ向けに案内しているのに、実際にはスタッフの
                   画面にその一覧が出てこないという食い違いがあった。 */}
               <div className="callout tip">
-                <span className="icon">💡</span>
+                <span className="icon" aria-hidden="true">💡</span>
                 <div><b>通知タブは店長権限のログインでのみ表示されます</b>（{secNum.accounts.c}参照）。個人アカウントでログインしているスタッフの画面には、このキャンセル待ち一覧は表示されません。対応が必要な場合は店長に確認してください。</div>
               </div>
             </section>
@@ -314,7 +319,7 @@ function ManualContent({ s, loadErr }) {
               <h2>{itemPeople}の臨時休みを設定する</h2>
               <p>設定タブの「指名できる{itemPeople}一覧」から、特定の日付だけを休みにできます（通常のシフトはそのまま、その日だけ指名を受け付けなくなります）。</p>
               <div className="callout tip">
-                <span className="icon">💡</span>
+                <span className="icon" aria-hidden="true">💡</span>
                 <div>この操作は<b>店長権限のログインでのみ表示されます</b>（{secNum.accounts.c}参照）。スタッフのログインでは設定タブ自体が表示されないため、臨時休みが必要な場合は店長に伝えてください。</div>
               </div>
             </section>
@@ -335,7 +340,7 @@ function ManualContent({ s, loadErr }) {
             </tbody>
           </table>
           <div className="callout tip">
-            <span className="icon">💡</span>
+            <span className="icon" aria-hidden="true">💡</span>
             <div>個人アカウントを作らなくても運用に支障はありません。全員が共通パスワードのままでも、これまでと同じように使えます。</div>
           </div>
         </section>
@@ -377,7 +382,7 @@ function ManualContent({ s, loadErr }) {
             <p style={{ color: 'var(--muted)' }}>店舗設定を読み込めなかったため、この一覧は表示できません。</p>
           )}
           <div className="callout tip">
-            <span className="icon">💡</span>
+            <span className="icon" aria-hidden="true">💡</span>
             <div>OFFになっている機能を使いたい場合は、店長または導入担当にご相談ください。設定タブから切り替えられます。</div>
           </div>
         </section>
@@ -386,7 +391,12 @@ function ManualContent({ s, loadErr }) {
       <footer>{bizName} 予約システム — スタッフ操作マニュアル</footer>
 
       <style jsx global>{`
-        :root { --bg:#EFEDE4; --paper:#F8F6EF; --ink:#1F2E2B; --ink-soft:#3B4A46; --muted:#6E6656; --accent:#0F6E5C; --accent-soft:#DCEAE4; --warm:#C9642A; --warm-soft:#F5E3D3; --line:#DCD5C2; --shadow:rgba(31,46,43,.08); }
+        /* --mutedは#6E6656で、本文が乗る背景（--paper/--bg）では4.5:1超だが、機能一覧のOFFバッジ
+           （.badge.b-off、背景--line）に乗せると約3.9:1でWCAG AAの4.5:1に届いていなかった
+           （Appleデザインチーム視点レビュー・ラウンド50での指摘、admin.js側で扱った--text-muted/
+           --text-faintのコントラスト是正と同種の問題）。他の用途（本文中の.meta等）は元々十分な
+           余裕があるため、少し濃くしてもそちらの見た目はほぼ変わらない。 */
+        :root { --bg:#EFEDE4; --paper:#F8F6EF; --ink:#1F2E2B; --ink-soft:#3B4A46; --muted:#5A5344; --accent:#0F6E5C; --accent-soft:#DCEAE4; --warm:#C9642A; --warm-soft:#F5E3D3; --line:#DCD5C2; --shadow:rgba(31,46,43,.08); }
         :global(html), :global(body) { margin: 0; background: var(--bg); color: var(--ink); font-family: "Hiragino Kaku Gothic ProN","Yu Gothic Medium","Noto Sans JP",sans-serif; line-height: 1.9; }
         .hero { padding: 56px 20px 40px; text-align: center; background: linear-gradient(180deg, var(--paper), var(--bg)); border-bottom: 1px solid var(--line); }
         .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: .12em; color: var(--accent); font-weight: 700; margin-bottom: 14px; }
