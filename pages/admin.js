@@ -142,7 +142,7 @@ const WEEK       = ['日','月','火','水','木','金','土']
 // あった（ITコンサル視点レビューでの指摘）。許可リストから外し、書き出し・読み込みの両方で対象外にする。
 const TEMPLATE_SETTINGS_KEYS = [
   'maxSeats', 'courses', 'timeRanges', 'dailyHours', 'cutoffRules', 'seatsByWeekday', 'capacityModel',
-  'q1Options', 'q3Options', 'q1Question', 'q3Question', 'bookingSources', 'bookingMode', 'itemLabel', 'itemIcon', 'staffAssignmentEnabled', 'staffLabel', 'countUnit', 'visitNoun', 'estimatePartsLabel', 'estimateLaborLabel', 'guestCountEnabled',
+  'q1Options', 'q3Options', 'q1Question', 'q3Question', 'bookingSources', 'bookingMode', 'itemLabel', 'itemIcon', 'staffAssignmentEnabled', 'staffLabel', 'countUnit', 'visitNoun', 'estimatePartsLabel', 'estimateLaborLabel', 'estimateWorkDoneLabel', 'guestCountEnabled',
   'fixedGuestCount', 'companionInfoEnabled', 'defaultStayMin', 'defaultCourseName', 'unparseableGuestFallback',
   'emailCollectionEnabled', 'enabledLanguages',
 ]
@@ -502,7 +502,13 @@ function CalNav({ year, month, onPrev, onNext }) {
 const MODAL_FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 function useModalFocusTrap(containerRef, closeBtnRef, onClose) {
   useEffect(() => {
-    closeBtnRef.current?.focus()
+    // 画面切り替え時のscreenRef（index.js）・stepContentRef（このファイルのSetupWizard／setup.js）は
+    // どちらも{preventScroll:true}付きでfocus()しているのに、この開いた瞬間の初期フォーカスだけ
+    // オプション無しのfocus()になっており、3モーダル全てに波及する形でパターンが揃っていなかった
+    // （Appleデザインチーム視点レビュー・ラウンド51でのクロスページ一貫性監査）。閉じるボタンは
+    // モーダル内スクロール領域の先頭にあるため通常は無害だが、iOS Safari等position:fixed配下での
+    // focus()は基準スクロール位置を巻き戻す既知の癖があるため、他の2実装と揃えて明示する。
+    closeBtnRef.current?.focus({ preventScroll: true })
     const container = containerRef.current
     if (!container) return
     function onKeyDown(e) {
@@ -522,7 +528,7 @@ function useModalFocusTrap(containerRef, closeBtnRef, onClose) {
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────
-function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, dateOverrides, staffAssignmentEnabled, staffRoster, courses, itemLabel, visitNoun, bookingSources, guestCountEnabled, fixedGuestCount, maxSeats, estimateFlowEnabled, estimatePartsLabel, estimateLaborLabel }) {
+function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, dateOverrides, staffAssignmentEnabled, staffRoster, courses, itemLabel, visitNoun, bookingSources, guestCountEnabled, fixedGuestCount, maxSeats, estimateFlowEnabled, estimatePartsLabel, estimateLaborLabel, estimateWorkDoneLabel }) {
   // フォーカストラップ用（上のuseModalFocusTrap参照）。closeBtnRefは開いた瞬間の初期フォーカス先も兼ねる。
   const modalRef = useRef(null)
   const closeBtnRef = useRef(null)
@@ -618,8 +624,9 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
     // estimateStatus==='完了'（作業完了まで進んだ後）の再送も、単なる「初回送信」と同じ軽い文言だと、
     // 完了済みジョブに対する重大な上書き操作であることが伝わらない（Apple CEO視点レビュー・ラウンド37
     // での指摘）。'提示済み'とは別に、より強い警告文言にする。
+    const workDoneLabel = estimateWorkDoneLabel || '作業完了'
     const confirmMsg = estimateStatus === '完了'
-      ? `この予約は既に作業完了（お引き取り案内済み）となっています。¥${amt.toLocaleString()}の新しい見積を送ると状態が「提示済み」に戻り、完了の記録が上書きされます。本当に送信しますか？`
+      ? `この予約は既に${workDoneLabel}となっています。¥${amt.toLocaleString()}の新しい見積を送ると状態が「提示済み」に戻り、完了の記録が上書きされます。本当に送信しますか？`
       : estimateStatus === '提示済み'
       ? `既にお客様が未回答の見積（¥${(parseFloat(res.estimateAmount)||0).toLocaleString()}）があります。¥${amt.toLocaleString()}の新しい見積で上書きして送信します。よろしいですか？`
       : `¥${amt.toLocaleString()}の見積をお客様へ送信します。よろしいですか？`
@@ -635,12 +642,16 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
 
   // 承諾済みの見積について、作業完了（引き取り可能）をお客様へ通知する
   // （業種経営者陣視点レビュー・2026-08-13で新設：承諾後の工程がフローに繋がっていなかった指摘）。
+  // ボタン・確認ダイアログ・トースト・状態バッジの文言は「作業完了」「お引き取り」という車修理特有の
+  // 言葉が個別にハードコードされていたため、estimatePartsLabel等と同じ設定化パターンでestimateWorkDoneLabel
+  // （既定「作業完了」）に統一した（業種経営者陣視点レビュー・ラウンド51での指摘）。
   async function markEstimateWorkDone() {
-    if (!window.confirm('作業完了（お引き取り可能）をお客様へ通知します。よろしいですか？')) return
+    const workDoneLabel = estimateWorkDoneLabel || '作業完了'
+    if (!window.confirm(`${workDoneLabel}をお客様へ通知します。よろしいですか？`)) return
     setEstimateWorkDoneSending(true)
     try {
       const r = await api.adminMarkEstimateWorkDone(res.id)
-      if (r.success) { showToast('作業完了を通知しました'); setEstimateStatus('完了') }
+      if (r.success) { showToast(`${workDoneLabel}を通知しました`); setEstimateStatus('完了') }
       else showToast(friendlyServerError(r, '通知に失敗しました'), 'error')
     } catch { showToast('通信エラーが発生しました。もう一度お試しください', 'error') }
     setEstimateWorkDoneSending(false)
@@ -836,7 +847,7 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
               {/* 承諾後の工程（実作業→精算）への接続（業種経営者陣視点レビュー・2026-08-13の指摘）。 */}
               {estimateStatus === '承諾済み' && (
                 <button disabled={estimateWorkDoneSending} onClick={markEstimateWorkDone} style={{ ...btnGreen, marginTop:8, marginLeft:8 }}>
-                  {estimateWorkDoneSending ? '送信中…' : '作業完了を通知（お引き取り案内）'}
+                  {estimateWorkDoneSending ? '送信中…' : `${estimateWorkDoneLabel || '作業完了'}を通知`}
                 </button>
               )}
               {/* お客様画面（index.js）には見積「完了」専用の強調表示があるのに、管理画面側にはプレーンな
@@ -844,7 +855,7 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
                   一目で判別しづらかった（Apple CEO視点レビュー・ラウンド37での指摘）。 */}
               {estimateStatus === '完了' && (
                 <div style={{ marginTop:8, background:'var(--info-bg)', border:'1px solid var(--info-border)', borderRadius:8, padding:10, fontSize:13, fontWeight:'bold', color:'var(--info-text)' }}>
-                  🔧 作業完了・お引き取り案内済みです
+                  🔧 {estimateWorkDoneLabel || '作業完了'}を通知済みです
                 </div>
               )}
             </>
@@ -1521,7 +1532,13 @@ export default function Admin() {
   // 接続設定（CALENDAR_ID／LIFF_ID／STAFF_GROUP_ID／LINE_TOKEN）。以前はGASエディタでのスクリプト
   // プロパティ直接編集が唯一の変更手段だった（LINEトークンのローテーション等も含む）。lineTokenは
   // サーバー側が値そのものを返さないため、connLineTokenInputは常に空欄から始まり、書き換えたい時だけ入力する。
-  const [connSettings, setConnSettings] = useState({ calendarId:'', liffId:'', staffGroupId:'', lineTokenSet:false })
+  // lineChannelIdSet：LINE_CHANNEL_ID（LINEユーザーIDの暗号学的検証を有効化するチャンネルID）が
+  // 設定済みかどうか。値自体は取得・編集できない（LINE Developersコンソールでの発行が必要な
+  // 開発担当者向け設定のため）が、未設定のままだと本人確認が後方互換の弱いモードで動き続けている
+  // ことに店舗側が気付く手段が全く無かった（Apple CEO視点レビュー・ラウンド51での指摘：
+  // LIFF IDの警告表示（下記）と同種の「保存＝反映ではない／設定次第で動作が変わる」の一種だが、
+  // こちらは項目自体が画面のどこにも存在しなかったため、警告以前に気付きようがなかった）。
+  const [connSettings, setConnSettings] = useState({ calendarId:'', liffId:'', staffGroupId:'', lineTokenSet:false, lineChannelIdSet:false })
   const [connLineTokenInput, setConnLineTokenInput] = useState('')
   const [connLoading, setConnLoading] = useState(false)
   const [connSaving, setConnSaving] = useState(false)
@@ -2144,7 +2161,7 @@ export default function Admin() {
     setConnLoading(true)
     try {
       const r = await api.getConnectionSettings()
-      if (r.success) setConnSettings({ calendarId: r.calendarId || '', liffId: r.liffId || '', staffGroupId: r.staffGroupId || '', lineTokenSet: !!r.lineTokenSet })
+      if (r.success) setConnSettings({ calendarId: r.calendarId || '', liffId: r.liffId || '', staffGroupId: r.staffGroupId || '', lineTokenSet: !!r.lineTokenSet, lineChannelIdSet: !!r.lineChannelIdSet })
     } catch {}
     setConnLoading(false)
   }
@@ -2215,6 +2232,7 @@ export default function Admin() {
           visitNoun: r.visitNoun || '来店',
           estimatePartsLabel: r.estimatePartsLabel || '部品代',
           estimateLaborLabel: r.estimateLaborLabel || '工賃',
+          estimateWorkDoneLabel: r.estimateWorkDoneLabel || '作業完了',
           storeSpecificNotifSections: Array.isArray(r.storeSpecificNotifSections) ? r.storeSpecificNotifSections : [],
           bookingSources: Array.isArray(r.bookingSources) && r.bookingSources.length > 0 ? r.bookingSources : ['電話','LINE','ウォークイン','その他'],
           guestCountEnabled: r.guestCountEnabled === undefined ? true : !!r.guestCountEnabled,
@@ -3769,6 +3787,29 @@ export default function Admin() {
                               style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
                             <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>セキュリティのため現在の値は表示されません。空欄のまま保存すると既存の値が維持されます。</div>
                           </div>
+                          <div>
+                            {/* LINE_CHANNEL_IDはこの画面の他項目と違い編集欄が無く（LINE Developersコンソールでの
+                                発行が必要な開発担当者向け設定のため）、これまで状態を確認する手段自体が画面の
+                                どこにも無かった。未設定の場合、Code.gs側のresolveTrustedLineUserId_は
+                                「LINEユーザーIDを暗号学的に検証しない」後方互換モードにfail-openし、
+                                自己申告のLINEユーザーIDをそのまま信頼する（第三者が他人のLINEユーザーIDを
+                                知っているだけでなりすませる、既存店舗を壊さないための意図的なトレードオフ）。
+                                店舗側がこのモードで動いていることに全く気付けないのは、LIFF IDの警告表示
+                                （左上、ラウンド47での指摘）と同種の「見た目上は普通に動いているが、実は
+                                想定と違う動作をしている」silent trapのため、状態だけでも読み取り専用で
+                                表示する（Apple CEO視点レビュー・ラウンド51での指摘）。 */}
+                            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>LINE本人確認（LINE_CHANNEL_ID）</label>
+                            <div style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }}>
+                              {connSettings.lineChannelIdSet ? '✅ 設定済み' : '⚠️ 未設定'}
+                            </div>
+                            {connSettings.lineChannelIdSet ? (
+                              <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>LINEでの予約確認・変更・キャンセルは、LINE側の署名を検証した上で本人確認しています。</div>
+                            ) : (
+                              <div style={{ marginTop:6, background:'var(--warning-bg)', border:'1px solid var(--warning-border)', borderRadius:6, padding:'6px 10px', fontSize:11, color:'var(--warning-text)' }}>
+                                ⚠️ 未設定のため、LINEでの予約確認・変更・キャンセルは「LINEユーザーIDを暗号学的に検証しない」従来モードで動作しています（第三者が他人のLINEユーザーIDを知っているだけでは通常なりすませませんが、検証済みの状態と比べると保護が弱くなります）。設定するには開発担当者にLINE Developersコンソールでのチャンネル発行・連携をご依頼ください。この欄からは変更できません。
+                              </div>
+                            )}
+                          </div>
                         </div>
                         <button onClick={saveConnectionSettingsHandler} disabled={connSaving} style={{ ...btnGreen, marginTop:14 }}>{connSaving ? '保存中…' : '接続設定を保存'}</button>
                       </>
@@ -3833,6 +3874,21 @@ export default function Admin() {
                             placeholder="工賃"
                             style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
                           <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>見積の入力欄・お客様への見積案内（LINE・メール・マイ予約画面）に使われます</div>
+                        </div>
+                        {/* 見積承諾後の「作業完了を通知（お引き取り案内）」ボタン・確認ダイアログ・トースト・
+                            状態バッジは、お客様への通知本文（上の見積内訳ラベルとは別に配信設定タブに
+                            既にある「作業完了・お引き取り案内の本文」）は既にカスタム可能なのに、それを
+                            取り囲む管理画面側の操作文言だけ「作業完了」「お引き取り」という車修理特有の
+                            言葉が複数箇所にハードコードされたまま残っていた（業種経営者陣視点レビュー・
+                            ラウンド51での指摘：クリニックが「診察完了」、学習塾が「面談完了」の意味で
+                            estimateFlowを流用しても、スタッフが毎回目にするボタン・確認ダイアログには
+                            無関係な「お引き取り」が出続ける）。estimatePartsLabel等と同じパターンで設定化。 */}
+                        <div>
+                          <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>見積承諾後「作業完了」の呼び方（診察完了・施術完了・面談完了等に変更可）</label>
+                          <input value={settings.estimateWorkDoneLabel} onChange={e => setSettings(s => ({ ...s, estimateWorkDoneLabel: e.target.value }))}
+                            placeholder="作業完了"
+                            style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
+                          <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>予約編集画面の「○○を通知」ボタン・確認ダイアログ・完了バッジに使われます（お客様への通知本文は別途「配信設定」タブでカスタマイズできます）</div>
                         </div>
                       </>
                     )}
@@ -5166,6 +5222,7 @@ export default function Admin() {
           visitNoun={settings.visitNoun || '来店'}
           estimatePartsLabel={settings.estimatePartsLabel || '部品代'}
           estimateLaborLabel={settings.estimateLaborLabel || '工賃'}
+          estimateWorkDoneLabel={settings.estimateWorkDoneLabel || '作業完了'}
           bookingSources={settings.bookingSources || SOURCES}
           guestCountEnabled={settings.guestCountEnabled}
           fixedGuestCount={settings.fixedGuestCount}
@@ -5214,9 +5271,19 @@ export default function Admin() {
              OFFピルの文字色を--text-mutedから--text-secondaryへ変更した際（375行目付近、
              Appleデザインチーム視点レビュー）と同じ問題が、この2変数の既定値そのものに残っていた
              （ラウンド49での指摘）。値だけを4.5:1超になるよう底上げし、明暗の相対関係
-             （faintの方がmutedより淡い）は維持する。 */
+             （faintの方がmutedより淡い）は維持する。
+             ラウンド49時点の--text-faint:#767676は白(#fff)に対しては約4.54:1で通っていたが、
+             このアプリでは--text-faintが白いカードの外（--bg-page #f5f5f5・--bg-subtle #fafafa、
+             例：2611行目付近の「読み込み中...」・3290行目付近の監査ログのdatetime等）でも
+             使われており、そちらでは約4.17:1／4.35:1しか無く実際にはWCAG AA未達のまま残っていた
+             （白1色だけで検証し、実際に使われている他の背景色までは確認していなかった。
+             Appleデザインチーム視点レビュー・ラウンド51でのクロスページ一貫性監査）。最も暗い
+             --bg-page(#f5f5f5)に対しても4.5:1を超えるまで底上げする（#6d6d6dで対白4.75:1・
+             対--bg-page 4.75:1・対--bg-subtle 4.96:1、実測値はnode contrast.jsで検証済み）。
+             setup.js側の同名変数（別ファイルの独立した:root）も同じ観点で#737373→同じ値へ揃える
+             （setup.js側はround50で--bg-subtleのみ検証し--bg-pageまでは確認していなかった）。 */
           --text-muted: #666666;
-          --text-faint: #767676;
+          --text-faint: #6d6d6d;
           --shadow-sm: rgba(0,0,0,.08);
           --btn-secondary-solid: #555;
           --success-bg: #e8f5e9;
@@ -5327,9 +5394,9 @@ export default function Admin() {
           --border-light: #eee;
           --text-primary: #333;
           --text-secondary: #555;
-          /* コントラスト修正の理由は上の:root（基本値）側のコメント参照（ラウンド49）。 */
+          /* コントラスト修正の理由は上の:root（基本値）側のコメント参照（ラウンド49・ラウンド51）。 */
           --text-muted: #666666;
-          --text-faint: #767676;
+          --text-faint: #6d6d6d;
           --shadow-sm: rgba(0,0,0,.08);
           --btn-secondary-solid: #555;
           --success-bg: #e8f5e9;

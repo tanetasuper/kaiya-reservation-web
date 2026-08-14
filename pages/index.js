@@ -23,6 +23,12 @@ const BOOKING_DRAFT_MAX_AGE_MS = 6 * 60 * 60 * 1000 // 6時間より古い保存
 // 変更フロー（既存予約の日程・時間・人数を選び直す画面）向けの下書き。新規予約フローと全く同じ理由
 // （WebView破棄によるリロードでの入力消失、ランダム客層視点レビュー・ラウンド45での指摘）で追加。
 const CHANGE_DRAFT_KEY = 'kaiya_change_draft_v1'
+// 送信ボタンを押した直後（応答が返る前）にLIFFのWebViewごと落ちる／回線が切れる等で、お客様が
+// 「成功したか失敗したか」を一度も見られないまま次にアプリを開くケースの対策（ランダム客層視点
+// レビュー・ラウンド51での指摘）。この印が残ったまま次回起動した場合、実際にその内容の予約が
+// もう出来ているかをgetMyReservationsで確認してから案内を出し分ける（詳細はsavePendingSubmit・
+// checkPendingSubmitIfAnyのコメント参照）。
+const PENDING_SUBMIT_KEY = 'kaiya_pending_submit_v1'
 
 // 検索エンジン向けの構造化データ（JSON-LD）のschema.orgタイプが、業態を問わず常に汎用の'LocalBusiness'
 // 固定だった（累積指摘の総棚卸しでの指摘：汎用予約プラットフォーム化の本旨に反する）。管理画面の
@@ -489,7 +495,10 @@ export default function Home() {
   const notesCloseBtnRef = useRef(null)
   const notesConfirmBtnRef = useRef(null)
   useEffect(() => {
-    if (showNotesPopup) notesCloseBtnRef.current?.focus()
+    // 画面遷移時のscreenRef（上のuseEffect、1402行目付近）・admin.js側のuseModalFocusTrap/stepContentRef
+    // と同じく{preventScroll:true}を付ける（Appleデザインチーム視点レビュー・ラウンド51でのクロス
+    // ページ一貫性監査：このポップアップだけオプション無しのfocus()になっていた）。
+    if (showNotesPopup) notesCloseBtnRef.current?.focus({ preventScroll: true })
   }, [showNotesPopup])
   function onNotesPopupKeyDown(e) {
     if (e.key === 'Escape') { setShowNotesPopup(false); return }
@@ -1129,6 +1138,11 @@ export default function Home() {
   // LINEログイン後／ゲストモード決定後の共通の画面遷移（URLパラメータでマイ予約に直接遷移する分岐を含む）
   const proceedAfterAuth = useCallback((userId, isGuest, authIdToken) => {
     const goMyRes = new URLSearchParams(window.location.search).get('screen') === 'myres'
+    // 前回、送信ボタンを押した直後に結果を見られないまま終わった予約が無いか確認する（非同期・
+    // 下のどの分岐とも並行して走らせる。checkPendingSubmitIfAnyのコメント参照）。見つかった場合は
+    // このままどの画面に居ても完了画面へ強制的に切り替わるため、以下の分岐の結果を上書きしうる
+    // （お客様には「前回のご予約は無事できていた」という情報の方が優先度が高いため意図的）。
+    checkPendingSubmitIfAny()
     // ゲスト向け確認メールの「マイ予約」深リンク（?screen=myres&guest=1）を踏んだ場合、セッションごとに
     // 変わる仮のゲストIDでは本人の予約と一切紐付かないため、以前はapi.getMyReservations(仮ID)が
     // 必ず空振りし、まさに助けるべきLINE未使用客が「予約がありません」という偽の表示に行き着き、
@@ -1141,13 +1155,23 @@ export default function Home() {
     }
     if (goMyRes && userId) {
       setMyRes([])
+      setMyResErr('')
       setMyResLoading(true)
       setCancelId(null)
       setScreen('myres')
       api.getMyReservations(userId, undefined, undefined, authIdToken).then(r => {
-        setMyRes(r.success ? r.list || [] : [])
+        if (r.success) { setMyRes(r.list || []) } else {
+          // 以前は失敗時にもmyRes([])だけで済ませていたため、本人確認に失敗しただけなのに
+          // 「現在、確定しているご予約はございません。」という偽の空表示に行き着いていた
+          // （実際には予約があるのに、無いと誤解させてしまう）。openMyRes()の通常経路と同様、
+          // エラーを表示し、お名前・電話番号での確認への導線（myResErr表示に付随するボタン）へ
+          // 進めるようにする（Appleデザインチーム視点レビュー・ラウンド51での指摘）。
+          setMyRes([])
+          setMyResErr(friendlyServerError(r, t('予約の読み込みに失敗しました。もう一度お試しください。'), t))
+        }
       }).catch(() => {
         setMyRes([])
+        setMyResErr(t('通信エラーが発生しました。もう一度お試しください。'))
       }).finally(() => setMyResLoading(false))
     } else if (restoreChangeDraftIfAny(userId, isGuest, authIdToken)) {
       // 変更フローの下書きが残っていれば優先して復元する（新規予約の下書きと変更の下書きが
@@ -1473,6 +1497,61 @@ export default function Home() {
     } catch {}
   }
 
+  // 送信ボタンを押した瞬間（応答が返るのを待つ「送信中です...」画面に切り替える直前）に呼ぶ。
+  // 上のBOOKING_DRAFT_KEYは screen==='input' の間しか更新されない（=確認画面へ進んだ時点の内容の
+  // ままサーバーへ届くまで残り続ける）ため、成功したか失敗したかをまだ知らない「未解決の送信」が
+  // あることそのものは、この専用の印で別途記録する。応答（成功・失敗いずれか）を受け取った時点で
+  // 必ずclearPendingSubmitを呼ぶこと。ここが呼ばれないまま次にアプリが開かれた場合だけ、
+  // checkPendingSubmitIfAnyが「前回の送信は結局どうなったのか」をサーバーに確認しに行く。
+  function savePendingSubmit(info) {
+    try { sessionStorage.setItem(PENDING_SUBMIT_KEY, JSON.stringify({ savedAt: Date.now(), ...info })) } catch {}
+  }
+  function clearPendingSubmit() {
+    try { sessionStorage.removeItem(PENDING_SUBMIT_KEY) } catch {}
+  }
+  // proceedAfterAuthから一度だけ、他の下書き復元と並行して呼ぶ（このチェック自体は非同期のため、
+  // 通常の画面遷移をブロックしない＝restoreBookingDraftIfAnyによる「入力内容を復元しました」表示は
+  // 従来通りそのまま先に出る）。
+  //
+  // 判定に使う識別子は、送信時点でサーバーに送ったのと同じお名前・電話番号にする（LINE利用者であっても
+  // これで一致確認できる：Code.gs側のgetMyReservationsは電話番号＋お名前の一致だけでもヒットする設計
+  // ——checkGuestIdentity/getMyReservationsのコメント参照）。ゲスト利用は再訪のたびにlineUserId自体が
+  // 使い捨てで変わってしまう（'guest_'+Date.now()）ため、こちらの方が前回のLINEアカウント状態に
+  // 依存せず確実。
+  //
+  // 見つかった＝前回の送信は実際には成功していたと判明した場合、まだ入力画面や確認画面にいたとしても
+  // 完了画面へ強制的に合わせる（お客様にとって「前回のご予約は無事できていた」という情報が最優先で、
+  // 黙っていると同じ内容をもう一度送信され二重予約の元になる）。見つからなかった、または確認自体が
+  // できなかった（回線不良等）場合は何もしない：前者はrestoreBookingDraftIfAnyの「入力内容を復元しました」
+  // がそのまま正しい状態であり、後者は最終的な整合性をサーバー側の二重送信対策・重複ブロック
+  // （createReservation内、同一顧客・同一日時の直近再送信を新規作成せず既存予約を返す／時間帯重複を
+  // 別予約として弾く仕組み）に委ねる（restoreChangeDraftIfAnyの裏取りと同じ考え方）。
+  function checkPendingSubmitIfAny() {
+    try {
+      const raw = sessionStorage.getItem(PENDING_SUBMIT_KEY)
+      if (!raw) return
+      const d = JSON.parse(raw)
+      if (!d || !d.savedAt || Date.now() - d.savedAt > BOOKING_DRAFT_MAX_AGE_MS || !d.date || !d.time || !d.phone || !d.name) { clearPendingSubmit(); return }
+      api.getMyReservations('', d.phone, d.name).then(r => {
+        if (!r || !r.success || !Array.isArray(r.list)) return // 確認できなかった場合は何もしない（上記コメント参照）
+        clearPendingSubmit()
+        const found = r.list.find(x => x.date === d.date && x.time === d.time && x.status !== 'キャンセル')
+        if (!found) return
+        // 見つかった＝前回の送信は実際には成功していた。もう一度同じ内容を送らせないよう、
+        // 未送信のつもりで残っている入力下書きも合わせて消す。
+        clearBookingDraft()
+        setBookingDraftRestored(false)
+        const recoveredNote = t('前回、通信が不安定になり結果が表示されないまま終了しましたが、ご予約は正常に完了していました。')
+        setDone({
+          detail: recoveredNote + '\n\n' + `${fmtDateLang(found.date, lang)}　${found.time}〜${found.endTime}\n${found.guests === '未定' ? t('人数未定') : guestsWithUnit(found.guests)}`,
+          id: `${t('予約番号：')}${found.id}`, pending: false, error: '', backScreen: 'confirm',
+          title: found.isKasshiki ? t('貸切お申し込みを受け付けました') : t('ご予約を承りました'), pendingApproval: found.status === '要確認',
+        })
+        setScreen('done')
+      }).catch(() => {}) // 確認自体が失敗した場合は何もしない（上記コメント参照）
+    } catch {}
+  }
+
   // 上と全く同じ理由（WebView破棄によるリロードでの入力消失）が、変更フロー（screen==='change'、
   // 既存予約の日程・時間・人数を選び直す画面）にも同様に当てはまるのに、新規予約フローの下書き
   // 保存だけが対応しており変更フローには保存の仕組み自体が無かった（ランダム客層視点レビュー・
@@ -1744,7 +1823,14 @@ export default function Home() {
         setSubmitting(false)
         return
       }
+      // 「送信中です...」に切り替えた直後、応答を受け取る前にWebViewごと落ちる／回線が切れる等で
+      // 結果を一度も見られないまま次回起動された場合の対策（checkPendingSubmitIfAnyのコメント参照）。
+      // 応答が返り次第（成功・失敗いずれでも）すぐ下で必ず消すため、正常に完了した場合はこの印が
+      // 残ることはない。定期予約（複数日分をまとめて送信）は単一の日付・時間では表しきれないため
+      // 対象外とする。
+      savePendingSubmit({ date: dateStr, time: selTime, name: commonPayload.name, phone: commonPayload.phone })
       const r = await api.createReservation({ ...commonPayload, date: dateStr })
+      clearPendingSubmit()
       if (r.success) {
         const doneMsg = isKasshiki
           ? baseDetail + '\n\n' + t('内容を確認後、ご連絡いたします。')
@@ -1759,6 +1845,9 @@ export default function Home() {
       // 英語かつ内部実装依存の技術的な文字列）をそのまま連結して表示しており、この画面の他の
       // catch節（execCancel等）が「もう一度お試しください」で止めているのと不揃いだった上、
       // お客様に読めても意味のない内容だった（ラウンド50での指摘）。他のcatch節と揃える。
+      // ここに来た場合（fetch自体が例外を投げた＝リクエストが本当に届いていない可能性が高い）は
+      // pending-submitの印を消さない：サーバーに実際届いていた／いなかったのどちらもあり得るため、
+      // 次回起動時にcheckPendingSubmitIfAnyがgetMyReservationsで裏取りできるようにしておく。
       setDone(prev => ({ ...prev, pending: false, error: t('通信エラーが発生しました') }))
     }
     setSubmitting(false)
@@ -1787,11 +1876,25 @@ export default function Home() {
       setMyResNeedsPhone(true)
       return
     }
+    // LINEログイン済みの場合も、既に分かっているお名前・電話番号（予約入力時にご登録済み、または
+    // getCustomerProfileによる自動入力済み）をmyResPhoneUsed/myResNameUsedとして保持しておく。
+    // これらはcancelReservation・changeReservation・respondToEstimate・cancelSeries・
+    // cancelMyWaitlistEntryが「lineUserIdの突合が一致しない場合の二要素目」として共通で参照する値
+    // だが、これまでLINE経由の利用時は一切設定されず常に空文字列のままだった（お名前・電話番号での
+    // 検索＝ゲスト専用の入力フォーム時にしか設定されていなかったため）。lineUserIdの突合は本人確認の
+    // 唯一の頼みの綱ではなく、サーバー側の判定が変わる可能性（店舗のLINE連携設定状況等）や、まれな
+    // 不一致にも耐えられるよう、分かっている範囲で常にフォールバック値を用意しておく
+    // （Appleデザインチーム視点レビュー・ラウンド51での指摘）。
+    setMyResPhoneUsed(phone.trim())
+    setMyResNameUsed(name.trim())
     setMyResLoading(true)
     try {
-      const r = await api.getMyReservations(profile?.userId || '', undefined, undefined, idToken)
+      // phone/nameも併せて送っておくと、lineUserIdの一致だけでは本人確認が完了しない場合（将来の
+      // サーバー側の判定変更を含む）のフォールバックとしてサーバー側が使える。既にlineUserIdが
+      // 一致する通常のケースでは無視される値のため、送っても悪影響はない。
+      const r = await api.getMyReservations(profile?.userId || '', phone.trim(), name.trim(), idToken)
       if (r.success) setMyRes(r.list || [])
-      else { setMyRes([]); setMyResErr(t('予約の読み込みに失敗しました。もう一度お試しください。')) }
+      else { setMyRes([]); setMyResErr(friendlyServerError(r, t('予約の読み込みに失敗しました。もう一度お試しください。'), t)) }
     } catch {
       setMyRes([])
       setMyResErr(t('通信エラーが発生しました。もう一度お試しください。'))
@@ -1800,7 +1903,7 @@ export default function Home() {
     // キャンセル待ちの取得はあくまで付随情報のため、失敗してもマイ予約本体の表示には影響させない
     // （myResErrとは別に扱い、ここの失敗時は単に何も表示しない＝空リストのまま）。
     try {
-      const wr = await api.getMyWaitlist(profile?.userId || '', undefined, undefined, idToken)
+      const wr = await api.getMyWaitlist(profile?.userId || '', phone.trim(), name.trim(), idToken)
       if (wr.success) setMyWaitlist(wr.list || [])
     } catch { /* 付随情報のため無視 */ }
   }
@@ -2342,8 +2445,19 @@ export default function Home() {
                     <span style={{ fontSize:13, color:'var(--hint)' }}>{capacityModel === 'perStaff' ? staffCheckingText() : t('空き状況を確認中...')}</span>
                   </div>
                 )}
+                {/* このファイル内のバリデーションエラー（availErr以下、wlErr/inputErr/myResErr/
+                    seriesCancelErr/estimateRespondErr/lateReqErr/chgErr等）はrole="alert"を使いながら
+                    aria-live="polite"を明示指定しており、role="alert"の暗黙値であるassertiveを
+                    上書きして事実上politeへ格下げしてしまっていた（ARIAの解決順序では明示指定した
+                    属性値がロールの暗黙値より優先されるため）。同じファイル内のcfErr/chgcfErr
+                    （「確認画面へ」送信時のエラー）だけはaria-live="assertive"と正しく書かれており、
+                    setup.jsのformErrも同じくassertiveだったのに、この一群だけ取り残されていた
+                    （Appleデザインチーム視点レビュー・ラウンド51でのクロスページ一貫性監査）。
+                    ユーザーの対応が必要なバリデーションエラー＝assertive、完了通知等の受動的な
+                    案内＝role="status"・politeという、ファイル内で既に大半に適用されていたルールに
+                    揃え、この一群も含め全てassertiveへ統一する。 */}
                 {availErr && !availLoading && (
-                  <div role="alert" aria-live="polite" style={{ background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 12px', marginBottom:10, fontSize:13, color:'var(--red)' }}>
+                  <div role="alert" aria-live="assertive" style={{ background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 12px', marginBottom:10, fontSize:13, color:'var(--red)' }}>
                     {availErr}
                     <button onClick={() => fetchAvailability(selDate, selTime, visibleCourses[selCourse]?.name, staffAssignmentEnabled ? selStaff : undefined)}
                       style={{ marginLeft:8, background:'var(--white)', border:'1px solid var(--red)', color:'var(--red)', borderRadius:6, padding:'12px 16px', minHeight:44, minWidth:44, fontSize:13, fontWeight:'bold', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center' }}>
@@ -2422,7 +2536,7 @@ export default function Home() {
                             </label>
                           </div>
                         )}
-                        {wlErr && <div role="alert" aria-live="polite" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
+                        {wlErr && <div role="alert" aria-live="assertive" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         {/* キャンセル待ち登録も氏名・電話番号を収集するため、予約確定と同じ同意チェックを
                             必須にする（Apple CEO視点レビューでの指摘：確認画面を経由しないこの経路だけ
                             同意チェックをすり抜けていた） */}
@@ -2509,7 +2623,7 @@ export default function Home() {
                               style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--white)', color:'var(--text)' }} />
                           </div>
                         )}
-                        {wlErr && <div role="alert" aria-live="polite" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
+                        {wlErr && <div role="alert" aria-live="assertive" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         {featureFlags.waitlistEnabled && (
                           <>
                             <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginBottom:8, cursor:'pointer' }}>
@@ -2725,7 +2839,7 @@ export default function Home() {
             </>
           )}
 
-          {inputErr && <div className="err mt12" role="alert" aria-live="polite">{inputErr}</div>}
+          {inputErr && <div className="err mt12" role="alert" aria-live="assertive">{inputErr}</div>}
           <div className="mt16">
             <button className="btn-p" onClick={goConfirm}>{t('確認画面へ　→')}</button>
           </div>
@@ -3040,7 +3154,7 @@ export default function Home() {
                 <input type="tel" value={myResPhoneInput} aria-label={t('電話番号')}
                   onChange={(e) => { setMyResPhoneInput(e.target.value); setMyResErr('') }}
                   placeholder={t('電話番号（例：090-0000-0000）')} />
-                {myResErr && <div className="err" role="alert" aria-live="polite" style={{ marginTop: 10 }}>{myResErr}</div>}
+                {myResErr && <div className="err" role="alert" aria-live="assertive" style={{ marginTop: 10 }}>{myResErr}</div>}
                 <div className="mt16">
                   <button className="btn-p" disabled={myResLoading} onClick={lookupMyResByPhone}>
                     {myResLoading ? t('確認中...') : t('確認する')}
@@ -3058,9 +3172,19 @@ export default function Home() {
               </div>
             </div>
           ) : myResErr ? (
-            <div className="no-res" role="alert" aria-live="polite" style={{ color: 'var(--red)' }}>
+            <div className="no-res" role="alert" aria-live="assertive" style={{ color: 'var(--red)' }}>
               {myResErr}<br />
               📞 <a href={telHref(bizPhone)} style={{ color: 'var(--green)', fontWeight: 'bold' }}>{bizPhone}</a>
+              {/* LINEでの自動確認（lineUserIdの突合）が失敗した場合、以前はここで行き止まりになり、
+                  お店への電話以外に進む手段が無かった（サーバー側の本人確認の判定が今後変わる場合
+                  ＝店舗のLINE連携設定状況等を含め、常に成功する保証は無い）。ゲスト向けと同じ
+                  お名前・電話番号の確認フォームへ切り替えられるようにし、行き止まりを無くす
+                  （Appleデザインチーム視点レビュー・ラウンド51での指摘）。 */}
+              <div style={{ marginTop: 14 }}>
+                <button className="btn-s" onClick={() => { setMyResErr(''); setMyResNeedsPhone(true) }}>
+                  {t('📞　お名前・電話番号で確認する')}
+                </button>
+              </div>
             </div>
           ) : myRes.length === 0 ? (
             <div className="no-res">{t('現在、確定しているご予約はございません。')}</div>
@@ -3152,7 +3276,7 @@ export default function Home() {
                     )}
                   </div>
                 )}
-                {seriesCancelErr && seriesCancelErrId === res.seriesId && <div className="err" role="alert" aria-live="polite" style={{ marginTop: 4 }}>{seriesCancelErr}</div>}
+                {seriesCancelErr && seriesCancelErrId === res.seriesId && <div className="err" role="alert" aria-live="assertive" style={{ marginTop: 4 }}>{seriesCancelErr}</div>}
                 {/* 見積/承認フロー：予約自体のステータスとは独立（辞退しても予約自体は残る）。
                     「提示済み」の間だけ承諾・辞退の操作を出す。 */}
                 {res.estimateStatus === '提示済み' && (
@@ -3194,7 +3318,7 @@ export default function Home() {
                         </div>
                       </div>
                     )}
-                    {estimateRespondErr && estimateRespondErrId === res.id && <div className="err" role="alert" aria-live="polite" style={{ marginTop: 6 }}>{estimateRespondErr}</div>}
+                    {estimateRespondErr && estimateRespondErrId === res.id && <div className="err" role="alert" aria-live="assertive" style={{ marginTop: 6 }}>{estimateRespondErr}</div>}
                   </div>
                 )}
                 {(res.estimateStatus === '承諾済み' || res.estimateStatus === '辞退済み') && (
@@ -3259,7 +3383,7 @@ export default function Home() {
                         </div>
                         <textarea rows={2} value={lateReqMsg} onChange={e => setLateReqMsg(e.target.value)}
                           placeholder={visitText('ご希望の内容（例：来店時間を19時に変更したい）')} />
-                        {lateReqErr && <div className="err" role="alert" aria-live="polite" style={{ marginTop: 6 }}>{lateReqErr}</div>}
+                        {lateReqErr && <div className="err" role="alert" aria-live="assertive" style={{ marginTop: 6 }}>{lateReqErr}</div>}
                         {/* この依頼文（自由記述）も新たに収集する個人情報のため、予約確定と同じ同意チェックを
                             必須にする（Apple CEO視点レビューでの指摘） */}
                         <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginTop:8, cursor:'pointer' }}>
@@ -3400,7 +3524,7 @@ export default function Home() {
               </div>
             </div>
           </div>
-          {chgErr && <div className="err mt12" role="alert" aria-live="polite">{chgErr}</div>}
+          {chgErr && <div className="err mt12" role="alert" aria-live="assertive">{chgErr}</div>}
           <div className="card" id="card-chg-date">
             <h2 className="card-lbl">{visitText('📅　新しいご来店日')}</h2>
             <div className="card-body">
@@ -3461,7 +3585,7 @@ export default function Home() {
                     参照される共有stateで、セットされると両フローで人数ボタンが全て無効化されるのに、
                     変更フロー側だけ理由も再試行手段も一切案内されず詰みになっていた）。 */}
                 {availErr && !availLoading && (
-                  <div role="alert" aria-live="polite" style={{ background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 12px', marginBottom:10, fontSize:13, color:'var(--red)' }}>
+                  <div role="alert" aria-live="assertive" style={{ background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 12px', marginBottom:10, fontSize:13, color:'var(--red)' }}>
                     {availErr}
                     <button onClick={() => fetchAvailability(chgDate, chgTime, changingRes?.course)}
                       style={{ marginLeft:8, background:'var(--white)', border:'1px solid var(--red)', color:'var(--red)', borderRadius:6, padding:'12px 16px', minHeight:44, minWidth:44, fontSize:13, fontWeight:'bold', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center' }}>
@@ -3535,7 +3659,7 @@ export default function Home() {
                             </label>
                           </div>
                         )}
-                        {wlErr && <div role="alert" aria-live="polite" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
+                        {wlErr && <div role="alert" aria-live="assertive" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginBottom:8, cursor:'pointer' }}>
                           <input type="checkbox" checked={privacyConsent} onChange={(e) => setPrivacyConsent(e.target.checked)} style={{ marginTop:2 }} />
                           <span>{t('ご入力いただいた情報の取り扱い（')}<a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={openPrivacyLink} style={{ color:'var(--info-text)', textDecoration:'underline' }}>{t('こちら')}</a>{t('）に同意します')}</span>
@@ -3575,7 +3699,7 @@ export default function Home() {
                               style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--white)', color:'var(--text)' }} />
                           </div>
                         )}
-                        {wlErr && <div role="alert" aria-live="polite" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
+                        {wlErr && <div role="alert" aria-live="assertive" style={{ color:'var(--red)', marginBottom:8 }}>{wlErr}</div>}
                         {featureFlags.waitlistEnabled && (
                           <>
                             <label style={{ display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:'var(--sub)', marginBottom:8, cursor:'pointer' }}>
