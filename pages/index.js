@@ -459,6 +459,27 @@ export default function Home() {
   const [settingsDateOverrides, setSettingsDateOverrides] = useState({})
   const [bookingNotes, setBookingNotes] = useState('')
   const [showNotesPopup, setShowNotesPopup] = useState(false)
+  // 注意事項ポップアップ（role="dialog" aria-modal="true"、3623行目付近）が、見た目上は画面全体を覆う
+  // モーダルなのに開いた時にフォーカスを一切移動しておらず、閉じるボタン・Escapeキーでの閉じる操作・
+  // Tabキーでの背後要素への「漏れ出し」防止（フォーカストラップ）のいずれも無かった。確認画面の
+  // 通常のキャンセル確認（cnl-confirm、はい/いいえの2択）はcnlYesRefsで既にフォーカス移動しているのに、
+  // このポップアップだけ独立した仕組みのまま取り残されていた（Appleデザインチーム視点レビュー・
+  // 審判団ラウンド48での指摘）。ポップアップ内の対話可能要素は「✕閉じる」「確認しました」の2つの
+  // ボタンのみのため、この2つの間でTab/Shift+Tabを循環させるだけの簡潔なトラップで足りる。
+  const notesCloseBtnRef = useRef(null)
+  const notesConfirmBtnRef = useRef(null)
+  useEffect(() => {
+    if (showNotesPopup) notesCloseBtnRef.current?.focus()
+  }, [showNotesPopup])
+  function onNotesPopupKeyDown(e) {
+    if (e.key === 'Escape') { setShowNotesPopup(false); return }
+    if (e.key !== 'Tab') return
+    const first = notesCloseBtnRef.current
+    const last = notesConfirmBtnRef.current
+    if (!first || !last) return
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  }
   const defCutoff = { daysBefore:2, time:'22:00' }
   const [settingsCutoffRules, setSettingsCutoffRules] = useState({
     '0':{ daysBefore:3, time:'22:00' }, '1':defCutoff, '2':defCutoff,
@@ -1208,7 +1229,19 @@ export default function Home() {
       const currentCourseName = selectedCourseNameRef.current
       // 「本当に選択中のコースが廃止・改名された」場合だけここでtrueにする（範囲チェックのみの
       // フォールバック分岐や、そもそもまだ何も選択追跡していない初回読み込みでは出さない）。
-      if (currentCourseName && newVisibleForCourseCheck.findIndex(c => c.name === currentCourseName) < 0) {
+      // さらに、この案内は「選び直してください」という具体的な行動を求める文言のため、実際に
+      // 選び直す手段がある場合に限って出す（ランダム客層視点レビュー・ラウンド48での指摘）。
+      // (1) コース無しモード（isSimpleMode、r.bookingMode優先。この応答自体でbookingModeが
+      // 変わる場合にstate更新の非同期反映を待たず判定できるようにする）はコース選択UI自体が
+      // 画面に無く、「選び直す」場所が存在しない。(2) 表示中のコースが1件だけの場合、選択肢の
+      // クリックハンドラ（selectCourse、2113行目付近）自体が`visibleCourses.length <= 1`で
+      // 早期returnする無反応な要素のため、これも「選び直す」操作が実質不可能。どちらの場合も
+      // コース名がこのファイルにはID等の安定識別子が無いため「廃止」と「改名」を区別できない
+      // （このコメント群の設計上の制約）性質上、単なる改名（実際には何も失われていない）の
+      // 可能性が高いにもかかわらず、対処不能な指示だけを示してお客様を不必要に戸惑わせていた。
+      const effectiveBookingMode = r.bookingMode || bookingMode
+      const canReselectCourse = effectiveBookingMode !== 'simple' && newVisibleForCourseCheck.length > 1
+      if (canReselectCourse && currentCourseName && newVisibleForCourseCheck.findIndex(c => c.name === currentCourseName) < 0) {
         setCourseUnavailableNotice(true)
       }
       setSelCourse(prev => {
@@ -1314,8 +1347,23 @@ export default function Home() {
     }
   }, [holidays])
 
+  // 画面（linechoice/loading/input/confirm/done/myres/change/chgconfirm）切り替えのたびにwindow.scrollTo(0,0)で
+  // 見た目上はトップへ戻していたが、これは「見た目のスクロール位置」だけであり、キーボード操作・
+  // スクリーンリーダー利用者のフォーカス自体は前の画面で最後に触れていた要素（多くの場合、切り替え後の
+  // 画面には存在しないボタン等）に取り残されたままだった。通常のページ遷移であればブラウザがフォーカスを
+  // リセットするが、この構成はscreen stateで表示を切り替えるSPA的な作りのため、明示的にフォーカスを
+  // 新しい画面のコンテナへ移さない限り、画面が変わったこと自体がスクリーンリーダーに伝わらない
+  // （Appleデザインチーム視点レビュー・審判団ラウンド48での指摘）。エラーカードへのフォーカス移動
+  // （scrollToCard、1479行目付近）で既に使っている「tabindexを動的に付与してfocus()する」のと同じ
+  // 手法を、画面切り替え全体にも適用する（見た目・既存のscrollTo(0,0)自体は変更しない）。
+  const screenRef = useRef(null)
   useEffect(() => {
     window.scrollTo(0, 0)
+    const el = screenRef.current
+    if (el) {
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1')
+      el.focus({ preventScroll: true })
+    }
   }, [screen])
 
   useEffect(() => {
@@ -1749,7 +1797,24 @@ export default function Home() {
         setMyWaitlist((prev) => prev.map((x) => (x.id === id ? { ...x, cancelled: true } : x)))
         setWlCancelConfirmId(null)
       } else {
-        setWlCancelErr(r.error || t('取り消しに失敗しました。お手数ですがお電話にてご連絡ください。'))
+        // このマイ予約画面はスタッフの管理画面（loadWaitlist）と違い自動ポーリングも「開いたときだけ
+        // 再取得」する仕組みも無いため、お客様がこの一覧を開いたまま裏でスタッフが管理画面から同じ行を
+        // 削除した場合や、空きが出て既に案内・削除された場合、cancelMyWaitlistEntryは対象行を見つけられず
+        // 「見つかりません」系のエラーを返す（Code.gs cancelMyWaitlistEntry参照）。これは通信エラー等の
+        // 「何か問題が起きた」ケースとは異なり「既に決着済み」なだけなので、従来通り赤字エラー＋
+        // 「お電話ください」を出したままにしておくと、お客様には存在しない登録に対して「もう一度電話を
+        // 掛けるべきか」という不要な不安を与え、かつカード自体は「取り消す」ボタン付きのまま残るため
+        // 何度でも同じ操作を繰り返しかねない（スタッフ側の同種の問題はラウンド47でloadWaitlistの
+        // 再取得により解消済みだが、お客様側のこの画面には対になる修正が入っていなかった。Meta CEO視点
+        // レビュー・審判団ラウンド48での指摘）。「見つかりません」で始まるエラーの場合だけは通信の
+        // 失敗として扱わず、既に取り消し済みの表示と同じ「決着済み」の見た目に揃えて確認欄を閉じる。
+        const alreadyGone = !!r && typeof r.error === 'string' && r.error.indexOf('見つかりません') === 0
+        if (alreadyGone) {
+          setMyWaitlist((prev) => prev.map((x) => (x.id === id ? { ...x, cancelled: true, alreadyGone: true } : x)))
+          setWlCancelConfirmId(null)
+        } else {
+          setWlCancelErr(r.error || t('取り消しに失敗しました。お手数ですがお電話にてご連絡ください。'))
+        }
       }
     } catch {
       setWlCancelErr(t('通信エラーが発生しました。もう一度お試しいただき、失敗する場合はお電話にてご連絡ください。'))
@@ -2006,7 +2071,7 @@ export default function Home() {
 
       {/* ── LINEログイン選択（PC・LINE外ブラウザのみ） ── */}
       {screen === 'linechoice' && (
-        <div className="scr">
+        <div className="scr" ref={screenRef}>
           <div className="ld-wrap" style={{ paddingTop: 40 }}>
             <p style={{ fontSize: 14, color: 'var(--text)', marginBottom: 24, lineHeight: 1.7 }}>
               {t('ご予約方法をお選びください')}
@@ -2031,7 +2096,7 @@ export default function Home() {
 
       {/* ── LOADING ── */}
       {screen === 'loading' && (
-        <div className="scr">
+        <div className="scr" ref={screenRef}>
           <div className="ld-wrap">
             <div className="dots">
               <div className="dot" /><div className="dot" /><div className="dot" />
@@ -2062,7 +2127,7 @@ export default function Home() {
 
       {/* ── INPUT FORM ── */}
       {screen === 'input' && (
-        <div className="scr">
+        <div className="scr" ref={screenRef}>
           {/* 下書き復元の案内（詳細はbookingDraftRestoredの宣言部コメント参照）。エラーではないため
               role="status"・politeで、見た目も他のエラーバナーと紛らわしくないよう案内色（info）にする。 */}
           {bookingDraftRestored && (
@@ -2618,7 +2683,7 @@ export default function Home() {
 
       {/* ── CONFIRM ── */}
       {screen === 'confirm' && (
-        <div className="scr">
+        <div className="scr" ref={screenRef}>
           <div className="card">
             <h2 className="card-lbl">{t('✅　ご予約内容の確認')}</h2>
             {!isSimpleMode && (
@@ -2789,7 +2854,15 @@ export default function Home() {
             </div>
           )}
           {bookingNotes ? (
-            <div className="policy" style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={() => setShowNotesPopup(true)}>
+            // クリックのみのdivで、キーボード操作・スクリーンリーダーからは押せる要素として存在自体が
+            // 伝わらなかった（コース選択カード・カレンダーマス等、この累積指摘の総棚卸しで既に直した
+            // 「クリックのみdiv」と同じ不備が、注意事項ポップアップの再表示ボタンにだけ残っていた。
+            // Appleデザインチーム視点レビュー・審判団ラウンド48での指摘）。コース選択（2166行目付近）
+            // と同じ手法（role="button"・tabIndex・Enter/Spaceのキー操作）に揃える。見た目は変更しない。
+            <div className="policy" role="button" tabIndex={0}
+              style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }}
+              onClick={() => setShowNotesPopup(true)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowNotesPopup(true) } }}>
               <span style={{ fontSize:16 }}>⚠️</span>
               <span>{t('注意事項・キャンセルポリシーを確認する（タップで再表示）')}</span>
             </div>
@@ -2824,7 +2897,7 @@ export default function Home() {
 
       {/* ── DONE ── */}
       {screen === 'done' && (
-        <div className="scr">
+        <div className="scr" ref={screenRef}>
           <div className="done-card">
             {done.pending ? (
               <div className="ld-wrap" style={{ padding: '20px 0' }}>
@@ -2836,7 +2909,11 @@ export default function Home() {
             ) : done.error ? (
               <>
                 <div style={{ fontSize: 48, marginBottom: 12 }}>🙇</div>
-                <div className="done-ttl" style={{ color: 'var(--red)' }}>{t('申し訳ございません')}</div>
+                {/* 完了画面（成功・エラーとも）の主見出しがdivで、確認・マイ予約等の他画面が持つh2の
+                    見出し構造（card-lbl）と揃っておらず、見出しジャンプ（スクリーンリーダーのHキー移動）で
+                    この画面の主題を飛ばしてしまっていた（Appleデザインチーム視点レビュー・審判団
+                    ラウンド48での指摘）。見た目（.done-ttlのフォント・余白）は変更しない。 */}
+                <h2 className="done-ttl" style={{ color: 'var(--red)' }}>{t('申し訳ございません')}</h2>
                 <div className="done-sub" style={{ lineHeight: 1.8 }}>
                   {t('予約処理中にエラーが発生しました。')}<br />
                   {t('原因を特定し、早急に対応いたします。')}
@@ -2860,7 +2937,7 @@ export default function Home() {
                 <div className="done-ck" style={done.pendingApproval ? { background: '#f5a623' } : undefined}>
                   {done.pendingApproval ? '⏳' : '✓'}
                 </div>
-                <div className="done-ttl">{done.title}</div>
+                <h2 className="done-ttl">{done.title}</h2>
                 {done.pendingApproval && (
                   <div style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 10, padding: '10px 14px', margin: '0 0 12px', fontSize: 13, color: 'var(--warning-text)', fontWeight: 'bold' }}>
                     {t('※ まだ確定していません。店舗からの確認のご連絡をお待ちください。')}
@@ -2893,7 +2970,7 @@ export default function Home() {
 
       {/* ── MY RESERVATIONS ── */}
       {screen === 'myres' && (
-        <div className="scr">
+        <div className="scr" ref={screenRef}>
           {myResNeedsPhone ? (
             <div className="card">
               <h2 className="card-lbl">{t('📞　電話番号でご予約を確認')}</h2>
@@ -3203,7 +3280,15 @@ export default function Home() {
                     {wl.staff ? <><br />🔖 {t('ご指名')}：{wl.staff}</> : null}
                   </div>
                   {wl.cancelled ? (
-                    <div role="status" style={{ marginTop: 8, color: 'var(--red)', fontSize: 13, fontWeight: 'bold' }}>{t('✕ 取り消しました')}</div>
+                    wl.alreadyGone ? (
+                      // 自分の操作で取り消したのではなく、裏でスタッフが削除した／空きが出て既に
+                      // 案内済みだった結果として画面上「決着済み」になったケース。「✕ 取り消しました」
+                      // （＝自分が取り消した）と同じ文言にすると事実と異なるため、区別した文言にする
+                      // （execWaitlistCancel内のalreadyGone分岐、Meta CEO視点レビュー・ラウンド48）。
+                      <div role="status" style={{ marginTop: 8, color: 'var(--sub)', fontSize: 13, fontWeight: 'bold' }}>{t('この登録は既に終了しています（空きのご案内が済んでいるか、既に取り消し済みです）')}</div>
+                    ) : (
+                      <div role="status" style={{ marginTop: 8, color: 'var(--red)', fontSize: 13, fontWeight: 'bold' }}>{t('✕ 取り消しました')}</div>
+                    )
                   ) : (
                   <div className="res-actions">
                     <button className="btn-cnl" onClick={() => { setWlCancelConfirmId(wl.id); setWlCancelErr('') }}>{t('取り消す')}</button>
@@ -3239,7 +3324,7 @@ export default function Home() {
 
       {/* ── CHANGE FORM ── */}
       {screen === 'change' && (
-        <div className="scr">
+        <div className="scr" ref={screenRef}>
           {/* 新規予約フローの下書き復元案内（bookingDraftRestored）と同じ理由・同じ見た目。 */}
           {changeDraftRestored && (
             <div role="status" aria-live="polite" style={{ background:'var(--info-bg)', border:'1px solid var(--info-border)', borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:'var(--info-text)' }}>
@@ -3516,7 +3601,7 @@ export default function Home() {
 
       {/* ── CHANGE CONFIRM ── */}
       {screen === 'chgconfirm' && (
-        <div className="scr">
+        <div className="scr" ref={screenRef}>
           <div className="card">
             <h2 className="card-lbl">{t('🔄　変更内容の確認')}</h2>
             <div className="cf-row">
@@ -3569,7 +3654,7 @@ export default function Home() {
 
       {/* ── NOTES POPUP ── */}
       {showNotesPopup && (
-        <div role="dialog" aria-modal="true" aria-labelledby="notes-popup-title" style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:500, display:'flex', alignItems:'flex-end', justifyContent:'center' }}>
+        <div role="dialog" aria-modal="true" aria-labelledby="notes-popup-title" onKeyDown={onNotesPopupKeyDown} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:500, display:'flex', alignItems:'flex-end', justifyContent:'center' }}>
           <div style={{ background:'var(--white)', borderRadius:'16px 16px 0 0', padding:'24px 20px 36px', width:'100%', maxWidth:480, maxHeight:'80vh', overflowY:'auto' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
               <h2 id="notes-popup-title" style={{ fontSize:16, fontWeight:'bold', color:'var(--text)' }}>{t('⚠️ ご予約にあたっての注意事項')}</h2>
@@ -3578,13 +3663,14 @@ export default function Home() {
                   可能領域がフォントサイズ22px相当（見た目の✕とほぼ同じ）しか無かった
                   （Appleデザインチーム視点レビュー・ラウンド45での指摘）。他のアイコンボタンと同じ
                   44×44の最小タッチターゲットに揃える。 */}
-              <button onClick={() => setShowNotesPopup(false)} aria-label={t('閉じる')}
+              <button ref={notesCloseBtnRef} onClick={() => setShowNotesPopup(false)} aria-label={t('閉じる')}
                 style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--hint)', minWidth:44, minHeight:44, display:'inline-flex', alignItems:'center', justifyContent:'center' }}>✕</button>
             </div>
             <div style={{ fontSize:13, color:'var(--sub)', lineHeight:1.9, whiteSpace:'pre-line', marginBottom:24 }}>
               {bookingNotes}
             </div>
             <button
+              ref={notesConfirmBtnRef}
               onClick={() => { setShowNotesPopup(false); setScreen('confirm') }}
               style={{ display:'block', width:'100%', padding:16, background:'var(--green)', color:'#fff', border:'none', borderRadius:12, fontSize:16, fontWeight:'bold', cursor:'pointer' }}>
               {t('確認しました　→')}
@@ -3751,7 +3837,7 @@ export default function Home() {
         .policy { background: var(--policy-bg); border: 1px solid var(--policy-border); border-radius: 8px; padding: 12px 14px; font-size: 12px; color: var(--policy-text); line-height: 1.7; }
         .done-card { background: var(--white); border-radius: 12px; padding: 36px 20px 32px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
         .done-ck { width: 72px; height: 72px; background: var(--green); border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #fff; }
-        .done-ttl { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+        .done-ttl { font-size: 18px; font-weight: bold; margin: 0 0 10px; }
         .done-sub { font-size: 13px; color: var(--sub); line-height: 1.8; }
         .done-id { font-size: 11px; color: var(--hint); margin-top: 12px; }
         .res-card { background: var(--white); border-radius: 12px; padding: 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }

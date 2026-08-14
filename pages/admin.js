@@ -1270,14 +1270,25 @@ export default function Admin() {
   const [selectedNotifIds,setSelectedNotifIds]= useState(new Set())
   const [auditLog,        setAuditLog]        = useState([])
   const [auditLoading,    setAuditLoading]    = useState(false)
+  // 通信エラー・サーバーエラーで取得に失敗した場合も、以前は空配列がセットされるだけで
+  // 「記録はまだありません」という0件表示と見分けがつかなかった。操作ログは「削除できない
+  // 参照専用の記録」を謳っており、本当は記録があるのに取得失敗で0件に見えると、店舗側が
+  // 誤って「何も操作されていない」と信じてしまう恐れがある（Apple CEO視点レビュー・第48回
+  // での指摘）。1749行目付近のstaffAccountsLoadErrorと同じ、取得失敗時だけ文言を出す仕組みを揃える。
+  const [auditLoadError,  setAuditLoadError]  = useState('')
   const [showAuditLog,    setShowAuditLog]    = useState(false)
   const [waitlist,        setWaitlist]        = useState([])
   const [waitlistLoading, setWaitlistLoading] = useState(false)
+  const [waitlistLoadError, setWaitlistLoadError] = useState('')
   const [showWaitlist,    setShowWaitlist]    = useState(false)
   // ゴミ箱（削除した予約の復元）。誤って「削除」を押しても取り消せる手段が無かった
   // （審判団バックログ一括レビューでの指摘。「復元機能」としてB判定・ユーザー承認済み）。
   const [trash,        setTrash]        = useState([])
   const [trashLoading, setTrashLoading] = useState(false)
+  // auditLoadErrorと同じ理由。ゴミ箱は誤削除からの最後の砦であり、通信エラーで「ゴミ箱は
+  // 空です」と誤表示されると、本来復元できたはずの予約を取り戻せると気づけないまま諦めて
+  // しまう恐れがある（Apple CEO視点レビュー・第48回での指摘）。
+  const [trashLoadError, setTrashLoadError] = useState('')
   const [showTrash,    setShowTrash]    = useState(false)
   const [bizSummary,      setBizSummary]      = useState(null)
   // ── 配信設定タブ（LINE配信のタイミング・文言・機能ON/OFF。コード変更不要で店側が調整できる） ────
@@ -1784,8 +1795,9 @@ export default function Admin() {
     setAuditLoading(true)
     try {
       const r = await api.adminGetAuditLog()
-      setAuditLog(r.list || [])
-    } catch { setAuditLog([]) }
+      if (r.success !== false) { setAuditLog(r.list || []); setAuditLoadError('') }
+      else { setAuditLog([]); setAuditLoadError(friendlyServerError(r, '操作ログの取得に失敗しました')) }
+    } catch { setAuditLog([]); setAuditLoadError('通信エラーが発生しました。もう一度お試しください') }
     setAuditLoading(false)
   }
 
@@ -1793,8 +1805,9 @@ export default function Admin() {
     setWaitlistLoading(true)
     try {
       const r = await api.adminGetWaitlist()
-      setWaitlist(r.list || [])
-    } catch { setWaitlist([]) }
+      if (r.success !== false) { setWaitlist(r.list || []); setWaitlistLoadError('') }
+      else { setWaitlist([]); setWaitlistLoadError(friendlyServerError(r, 'キャンセル待ちの取得に失敗しました')) }
+    } catch { setWaitlist([]); setWaitlistLoadError('通信エラーが発生しました。もう一度お試しください') }
     setWaitlistLoading(false)
   }
 
@@ -1802,8 +1815,9 @@ export default function Admin() {
     setTrashLoading(true)
     try {
       const r = await api.adminGetTrash()
-      setTrash(r.list || [])
-    } catch { setTrash([]) }
+      if (r.success !== false) { setTrash(r.list || []); setTrashLoadError('') }
+      else { setTrash([]); setTrashLoadError(friendlyServerError(r, 'ゴミ箱の取得に失敗しました')) }
+    } catch { setTrash([]); setTrashLoadError('通信エラーが発生しました。もう一度お試しください') }
     setTrashLoading(false)
   }
 
@@ -3146,6 +3160,8 @@ export default function Admin() {
                   </div>
                   {auditLoading ? (
                     <div style={{ textAlign:'center', padding:20, color:'var(--text-faint)', fontSize:13 }}>読み込み中...</div>
+                  ) : auditLoadError ? (
+                    <div style={{ textAlign:'center', padding:20, color:'var(--danger-solid)', fontSize:13 }}>{auditLoadError}</div>
                   ) : auditLog.length === 0 ? (
                     <div style={{ textAlign:'center', padding:20, color:'var(--text-faint)', fontSize:13 }}>記録はまだありません</div>
                   ) : (
@@ -3182,6 +3198,8 @@ export default function Admin() {
                   </div>
                   {waitlistLoading ? (
                     <div style={{ textAlign:'center', padding:20, color:'var(--text-faint)', fontSize:13 }}>読み込み中...</div>
+                  ) : waitlistLoadError ? (
+                    <div style={{ textAlign:'center', padding:20, color:'var(--danger-solid)', fontSize:13 }}>{waitlistLoadError}</div>
                   ) : waitlist.length === 0 ? (
                     <div style={{ textAlign:'center', padding:20, color:'var(--text-faint)', fontSize:13 }}>キャンセル待ちはありません</div>
                   ) : (
@@ -3223,6 +3241,8 @@ export default function Admin() {
                   </div>
                   {trashLoading ? (
                     <div style={{ textAlign:'center', padding:20, color:'var(--text-faint)', fontSize:13 }}>読み込み中...</div>
+                  ) : trashLoadError ? (
+                    <div style={{ textAlign:'center', padding:20, color:'var(--danger-solid)', fontSize:13 }}>{trashLoadError}</div>
                   ) : trash.length === 0 ? (
                     <div style={{ textAlign:'center', padding:20, color:'var(--text-faint)', fontSize:13 }}>ゴミ箱は空です</div>
                   ) : (
@@ -3452,7 +3472,7 @@ export default function Admin() {
                 {/* 店舗基本情報：他業態・他店舗へ転用する場合もコード修正なしでここだけ変えればよい */}
                 <div style={{ background:'var(--bg-card)', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px var(--shadow-sm)' }}>
                   <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>店舗基本情報</h2>
-                  <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>お客様画面・管理画面の見出しやLINE文面に使われる店名・電話番号等です。別の店舗・業態でこのシステムを使う場合も、ここを変えるだけでコード修正は不要です。</div>
+                  <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>お客様画面・管理画面の見出しやLINE文面に使われる店名・電話番号等です。別の店舗・業種でこのシステムを使う場合も、ここを変えるだけでコード修正は不要です。</div>
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:14 }}>
                     <div>
                       <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>店名</label>
@@ -3702,7 +3722,7 @@ export default function Admin() {
                       <label style={{ fontSize:12, color:'var(--text-secondary)' }}>お客様に人数を選ばせる</label>
                       <Pill on={settings.guestCountEnabled} onClick={() => setSettings(s => ({ ...s, guestCountEnabled: !s.guestCountEnabled }))} />
                     </div>
-                    <div style={{ fontSize:11, color:'var(--text-faint)', marginBottom:10 }}>OFFにすると予約画面から人数選択カードが消え、下記の人数で固定されます（面接予約・カウンセリング等、常に1名で予約する業態や、二人乗りボート等、常に決まった人数になる業態向け）。</div>
+                    <div style={{ fontSize:11, color:'var(--text-faint)', marginBottom:10 }}>OFFにすると予約画面から人数選択カードが消え、下記の人数で固定されます（面接予約・カウンセリング等、常に1名で予約する業種や、二人乗りボート等、常に決まった人数になる業種向け）。</div>
                     {!settings.guestCountEnabled && (
                       <div>
                         <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>固定人数（この人数として予約・容量計算されます）</label>
@@ -3720,7 +3740,7 @@ export default function Admin() {
                         onClick={() => setSettings(s => ({ ...s, companionInfoEnabled: !s.companionInfoEnabled }))} />
                     </div>
                     {settings.guestCountEnabled ? (
-                      <div style={{ fontSize:11, color:'var(--text-faint)' }}>2名以上のご予約時に表示される「ご一緒される方のお名前・アレルギー等」の入力欄です。飲食店以外（レンタル・面談等、アレルギーの概念がない業態）ではOFFにすることを推奨します。</div>
+                      <div style={{ fontSize:11, color:'var(--text-faint)' }}>2名以上のご予約時に表示される「ご一緒される方のお名前・アレルギー等」の入力欄です。飲食店以外（レンタル・面談等、アレルギーの概念がない業種）ではOFFにすることを推奨します。</div>
                     ) : (
                       <div style={{ fontSize:11, color:'var(--text-faint)' }}>上の「お客様に人数を選ばせる」がOFF（人数固定）のため、この項目は設定できません（人数が常に1名扱いのため、2名以上向けのこの入力欄は表示される機会がありません）。</div>
                     )}
@@ -3790,11 +3810,11 @@ export default function Admin() {
                         <input value={settings.staffLabel || ''} placeholder="担当者"
                           onChange={e => setSettings(s => ({ ...s, staffLabel: e.target.value }))}
                           style={{ maxWidth:160 }} />
-                        <span style={{ fontSize:11, color:'var(--text-faint)' }}>スタイリスト・整備士・ガイド・車両等、業態に合わせて変更できます（お客様・スタッフ双方の画面表示に使われます）</span>
+                        <span style={{ fontSize:11, color:'var(--text-faint)' }}>スタイリスト・整備士・ガイド・車両等、業種に合わせて変更できます（お客様・スタッフ双方の画面表示に使われます）</span>
                       </div>
                     )}
                     <div style={{ fontSize:11, color:'var(--text-faint)', marginBottom: settings.staffAssignmentEnabled ? 8 : 0 }}>
-                      ONにすると、お客様の予約画面に「ご指名（任意）」の選択欄が表示されます（料理人・スタイリスト等、{settings.staffLabel || '担当者'}を指名できる業態向け）。
+                      ONにすると、お客様の予約画面に「ご指名（任意）」の選択欄が表示されます（料理人・スタイリスト等、{settings.staffLabel || '担当者'}を指名できる業種向け）。
                       「残数の数え方」が「1日単位／時間帯単位」の場合、指名は情報として記録されるだけで空き状況には影響しません。「担当者単位」を選んだ場合のみ、実際にその{settings.staffLabel || '担当者'}の空き時間として管理されます（下記参照）。
                     </div>
                     {settings.staffAssignmentEnabled && (
@@ -3986,8 +4006,8 @@ export default function Admin() {
                       <option value="perStaff">担当者単位（席数ではなく担当者ごとの空き時間で管理）</option>
                     </CustomSelect>
                     <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:6 }}>
-                      「1日単位」は少人数・長時間滞在の店向けです。回転寿司・カジュアルチェーンのように1日に何度も席が入れ替わる業態は「時間帯単位」を選ぶと、実際には空いている時間帯まで満席と表示されるのを防げます。
-                      「担当者単位」は美容室（スタイリスト）・整備工場（整備士・リフト）・病院（医師）・面接（面接官）等、店全体の席数ではなく「担当者1人（または1リフト等）が同時に何件対応できるか」で予約可否が決まる業態向けです。この場合、上の「{settings.staffLabel || '担当者'}の指名機能」を必ずONにし、{settings.staffLabel || '担当者'}一覧に登録した名前・同時対応可能数が実際の予約可否の判定に使われます（お客様が「指名なし」を選んだ場合は、空いている{settings.staffLabel || '担当者'}に自動で割り当てます）。
+                      「1日単位」は少人数・長時間滞在の店向けです。回転寿司・カジュアルチェーンのように1日に何度も席が入れ替わる業種は「時間帯単位」を選ぶと、実際には空いている時間帯まで満席と表示されるのを防げます。
+                      「担当者単位」は美容室（スタイリスト）・整備工場（整備士・リフト）・病院（医師）・面接（面接官）等、店全体の席数ではなく「担当者1人（または1リフト等）が同時に何件対応できるか」で予約可否が決まる業種向けです。この場合、上の「{settings.staffLabel || '担当者'}の指名機能」を必ずONにし、{settings.staffLabel || '担当者'}一覧に登録した名前・同時対応可能数が実際の予約可否の判定に使われます（お客様が「指名なし」を選んだ場合は、空いている{settings.staffLabel || '担当者'}に自動で割り当てます）。
                     </div>
                     {settings.capacityModel === 'perStaff' && settings.staffRoster.length === 0 && (
                       <div style={{ marginTop:10, padding:'10px 14px', background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, fontSize:12, color:'var(--danger-text)', fontWeight:'bold' }}>
@@ -4815,7 +4835,7 @@ export default function Admin() {
                         <span style={{ fontSize:13, width:160 }}>貸切・大人数のご相談</span>
                         <Pill on={fset.kasshiki.enabled} onClick={() => updateFset('kasshiki','enabled', !fset.kasshiki.enabled)} />
                       </div>
-                      <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>店全体の買い切り予約に対応しない業態の場合はOFFにできます。OFFにすると予約画面から貸切・大人数相談ボタンが消えます。</div>
+                      <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>店全体の買い切り予約に対応しない業種の場合はOFFにできます。OFFにすると予約画面から貸切・大人数相談ボタンが消えます。</div>
                     </div>
                   )}
 
@@ -4825,7 +4845,7 @@ export default function Admin() {
                         <span style={{ fontSize:13, width:160 }}>1名利用は相席時のみ受付</span>
                         <Pill on={fset.singleDinerRequiresCompany.enabled} onClick={() => updateFset('singleDinerRequiresCompany','enabled', !fset.singleDinerRequiresCompany.enabled)} />
                       </div>
-                      <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>ONの場合、1名様のご予約は「その日に他のお客様の予約が既にある場合」のみ受付します（相席が前提の業態向け）。1人客が多い業態（ラーメン屋・定食屋のカウンター等）ではOFFにしてください。</div>
+                      <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>ONの場合、1名様のご予約は「その日に他のお客様の予約が既にある場合」のみ受付します（相席が前提の業種向け）。1人客が多い業種（ラーメン屋・定食屋のカウンター等）ではOFFにしてください。</div>
                     </div>
                   )}
                   {/* 「担当者単位」モードでは、1名利用の制約は担当者の空き状況だけで判定されるため
@@ -4857,7 +4877,7 @@ export default function Admin() {
                       <span style={{ fontSize:13, width:160 }}>見積/承認フロー</span>
                       <Pill on={fset.estimateFlow.enabled} onClick={() => updateFset('estimateFlow','enabled', !fset.estimateFlow.enabled)} />
                     </div>
-                    <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>修理工場・クリニック等、来店前に金額の事前承諾が必要な業態向け。OFFにすると予約編集画面から見積の入力欄が消えます（既に送信済みの見積は表示され続けます）。</div>
+                    <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>修理工場・クリニック等、来店前に金額の事前承諾が必要な業種向け。OFFにすると予約編集画面から見積の入力欄が消えます（既に送信済みの見積は表示され続けます）。</div>
                     {fset.estimateFlow.enabled && (
                       <div style={{ background:'var(--success-bg)', border:'1px solid var(--success-border)', borderRadius:8, padding:14, marginTop:10 }}>
                         <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap' }}>
