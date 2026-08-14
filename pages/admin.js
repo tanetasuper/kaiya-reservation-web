@@ -1192,6 +1192,7 @@ export default function Admin() {
   const isOwner = myRole === 'owner'
   // スタッフ個人アカウントの管理（店長のみ）
   const [staffAccounts, setStaffAccounts] = useState([])
+  const [staffAccountsLoadError, setStaffAccountsLoadError] = useState('')
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [editingAccountId, setEditingAccountId] = useState(null)
   const [newAccountName, setNewAccountName] = useState('')
@@ -1315,7 +1316,12 @@ export default function Admin() {
   // ここだけ食い違っていた（'14:00'のまま）。同じ「デフォルトのランチ終了時刻」という概念が
   // dailyHours方式とtimeRanges方式で別の値になっていたTIME_RANGES事故と同型の潜在地雷
   // （Microsoft CEO視点レビュー・ラウンド38での指摘）。dailyHoursの値に統一する。
-  const defTimeRanges = [{ type:'lunch', label:'ランチ', start:'11:30', end:'13:00' }, { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' }]
+  // 表示ラベルは「ランチ」「ディナー」だったが、これは飲食店専用の言葉で、美容院・クリニック・
+  // 整備工場・学習塾・レンタカー等の店主が営業時間タブを開くと、自分の業態に無関係な食事の時間帯名を
+  // 見せられることになっていた（業種経営者陣視点レビュー・第46回：admin.js設定タブの業態別ウォーク
+  // スルーで発覚）。type（'lunch'/'dinner'）自体はコース側mealType・サーバー側フィールド名と
+  // 対応しているため変更せず、画面に出す表示名だけを業態非依存の「昼の部」「夜の部」に変更する。
+  const defTimeRanges = [{ type:'lunch', label:'昼の部', start:'11:30', end:'13:00' }, { type:'dinner', label:'夜の部', start:'17:00', end:'21:00' }]
   // Code.gsのdefaultDailyHours()（サーバー側の唯一の権威ある既定値）とここが食い違っていた
   // （lunchEnabled: サーバーは全曜日false、ここは土日だけtrue／lunchEnd: サーバーは'13:00'、
   // ここは'14:00'）。通常はloadSettings()がサーバー値を必ず優先するため実害は無いが、admin.js
@@ -1743,8 +1749,9 @@ export default function Admin() {
   async function loadStaffAccounts() {
     try {
       const r = await api.adminGetStaffAccounts()
-      setStaffAccounts(r.list || [])
-    } catch { setStaffAccounts([]) }
+      if (r.success) { setStaffAccounts(r.list || []); setStaffAccountsLoadError('') }
+      else { setStaffAccounts([]); setStaffAccountsLoadError(friendlyServerError(r, 'スタッフアカウントの取得に失敗しました')) }
+    } catch { setStaffAccounts([]); setStaffAccountsLoadError('通信エラーが発生しました。もう一度お試しください') }
   }
 
   async function saveStaffAccount() {
@@ -2184,8 +2191,8 @@ export default function Admin() {
     // （スタッフ目線レビューでの指摘：フォームを開いて入力する操作とはいえ、誤った時間帯のまま
     // 送信すると通常の営業時間とズレた特別営業時間がその場で反映されてしまう）。
     const rangeDesc = [
-      hoursInput.lunchEnabled ? `ランチ ${hoursInput.lunchStart}〜${hoursInput.lunchEnd}` : null,
-      hoursInput.dinnerEnabled ? `ディナー ${hoursInput.dinnerStart}〜${hoursInput.dinnerEnd}` : null,
+      hoursInput.lunchEnabled ? `昼の部 ${hoursInput.lunchStart}〜${hoursInput.lunchEnd}` : null,
+      hoursInput.dinnerEnabled ? `夜の部 ${hoursInput.dinnerStart}〜${hoursInput.dinnerEnd}` : null,
     ].filter(Boolean).join('、') || '営業時間なし（終日休業扱い）'
     if (!window.confirm(`${fmtDate(selectedDate)} の営業時間を「${rangeDesc}」に変更します。通常の営業時間とは別の特別な設定になります。よろしいですか？`)) return
     setHoursSaving(true)
@@ -2987,7 +2994,7 @@ export default function Admin() {
                       <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:13 }}>
                         <input type="checkbox" checked={hoursInput.lunchEnabled}
                           onChange={e => setHoursInput(h => ({...h, lunchEnabled: e.target.checked}))} />
-                        ランチ
+                        昼の部
                       </label>
                       {hoursInput.lunchEnabled && (
                         <>
@@ -3003,7 +3010,7 @@ export default function Admin() {
                       <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:13 }}>
                         <input type="checkbox" checked={hoursInput.dinnerEnabled}
                           onChange={e => setHoursInput(h => ({...h, dinnerEnabled: e.target.checked}))} />
-                        ディナー
+                        夜の部
                       </label>
                       {hoursInput.dinnerEnabled && (
                         <>
@@ -3311,7 +3318,9 @@ export default function Admin() {
                 <div style={{ background:'var(--bg-card)', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px var(--shadow-sm)' }}>
                   <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>スタッフ個人ログイン</h2>
                   <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>店舗共通のパスワードに加えて、スタッフ個人の名前＋パスワードでログインできるアカウントを作成できます。「店長」は全操作可、「スタッフ」は予約の登録・確認・変更のみ可能です（設定変更・価格変更・顧客データダウンロード等はできません）。操作ログにも個人の名前が記録されます。作らなくても、これまで通り共通パスワードでのログイン（店長として扱われます）は使えます。</div>
-                  {staffAccounts.length === 0 ? (
+                  {staffAccountsLoadError ? (
+                    <div style={{ textAlign:'center', padding:'12px 0', color:'var(--danger-solid)', fontSize:13 }}>{staffAccountsLoadError}</div>
+                  ) : staffAccounts.length === 0 ? (
                     <div style={{ textAlign:'center', padding:'12px 0', color:'var(--text-faint)', fontSize:13 }}>個人アカウントは登録されていません</div>
                   ) : (
                     staffAccounts.map(acc => (
@@ -4024,8 +4033,8 @@ export default function Admin() {
                     <thead>
                       <tr style={{ borderBottom:'2px solid var(--border-light)' }}>
                         <th style={{ textAlign:'left', padding:'6px 8px', color:'var(--text-muted)', fontWeight:'normal', width:40 }}>曜</th>
-                        <th style={{ padding:'6px 8px', color:'var(--text-muted)', fontWeight:'normal' }}>ランチ</th>
-                        <th style={{ padding:'6px 8px', color:'var(--text-muted)', fontWeight:'normal' }}>ディナー</th>
+                        <th style={{ padding:'6px 8px', color:'var(--text-muted)', fontWeight:'normal' }}>昼の部</th>
+                        <th style={{ padding:'6px 8px', color:'var(--text-muted)', fontWeight:'normal' }}>夜の部</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4124,10 +4133,16 @@ export default function Admin() {
                             <Field label="価格（税込・円）"><input type="number" value={editCourse.price} style={iStyle} onChange={e=>setEditCourse(c=>({...c,price:parseInt(e.target.value)||0}))} /></Field>
                             <Field label="説明文" span><input type="text" value={editCourse.description} style={iStyle} onChange={e=>setEditCourse(c=>({...c,description:e.target.value}))} /></Field>
                             <Field label="所要時間（分）※1439分（24時間)未満のみ対応"><input type="number" min="1" max="1439" value={editCourse.duration} style={iStyle} onChange={e=>setEditCourse(c=>({...c,duration:parseInt(e.target.value)||0}))} /></Field>
-                            <Field label="食事タイプ">
+                            {/* 「食事タイプ」ラベル＋「ランチ／ディナー」の選択肢は飲食店専用の言葉で、
+                                美容院・クリニック・整備工場・学習塾・レンタカー等ではこの{settings.itemLabel || 'コース'}
+                                （施術・診療・整備・レッスン等）が何時の時間帯枠（上の「受付可能時間帯」タブで
+                                設定する2枠のいずれか）で受付可能かを選ぶだけの項目（業種経営者陣視点レビュー・
+                                第46回）。mealType自体（'lunch'/'dinner'/'both'）はサーバー側フィールド名と
+                                対応しているため変更せず、画面の表示だけ業態非依存にする。 */}
+                            <Field label="対応時間帯">
                               <CustomSelect value={editCourse.mealType||'dinner'} style={sStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
-                                <option value="lunch">ランチ</option>
-                                <option value="dinner">ディナー</option>
+                                <option value="lunch">昼の部</option>
+                                <option value="dinner">夜の部</option>
                                 <option value="both">共通</option>
                               </CustomSelect>
                             </Field>
@@ -4150,7 +4165,7 @@ export default function Admin() {
                                 <span style={{ marginLeft:8, fontSize:11, padding:'1px 8px', borderRadius:10, fontWeight:'normal',
                                   background: c.mealType==='lunch'?'var(--warning-bg)':c.mealType==='both'?'var(--purple-bg)':'var(--info-bg)',
                                   color: c.mealType==='lunch'?'var(--warning-text)':c.mealType==='both'?'var(--purple-text)':'var(--info-text)' }}>
-                                  {c.mealType==='lunch'?'ランチ':c.mealType==='both'?'共通':'ディナー'}
+                                  {c.mealType==='lunch'?'昼の部':c.mealType==='both'?'共通':'夜の部'}
                                 </span>
                                 {c.discontinued && (
                                   <span style={{ marginLeft:6, fontSize:11, padding:'1px 8px', borderRadius:10, background:'var(--bg-page)', color:'var(--text-muted)', fontWeight:'normal' }}>廃止中</span>
@@ -4185,10 +4200,10 @@ export default function Admin() {
                         <Field label="価格（税込・円）"><input type="number" value={newCourse.price} placeholder="11000" style={iStyle} onChange={e=>setNewCourse(c=>({...c,price:e.target.value}))} /></Field>
                         <Field label="説明文" span><input type="text" value={newCourse.description} placeholder={`${settings.itemLabel || 'コース'}の内容や特徴を入力`} style={iStyle} onChange={e=>setNewCourse(c=>({...c,description:e.target.value}))} /></Field>
                         <Field label="所要時間（分）※1439分（24時間)未満のみ対応"><input type="number" min="1" max="1439" value={newCourse.duration} placeholder="150" style={iStyle} onChange={e=>setNewCourse(c=>({...c,duration:e.target.value}))} /></Field>
-                        <Field label="食事タイプ">
+                        <Field label="対応時間帯">
                           <CustomSelect value={newCourse.mealType||'dinner'} style={sStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
-                            <option value="lunch">ランチ</option>
-                            <option value="dinner">ディナー</option>
+                            <option value="lunch">昼の部</option>
+                            <option value="dinner">夜の部</option>
                             <option value="both">共通</option>
                           </CustomSelect>
                         </Field>
@@ -4327,6 +4342,7 @@ export default function Admin() {
                         setCustLoading(true)
                         try {
                           const r = await api.adminGetCustomerData()
+                          if (!r.success) { showToast(friendlyServerError(r, '顧客データの取得に失敗しました'),'error'); setCustLoading(false); return }
                           const list = r.list || []
                           if (!list.length) { showToast('顧客データが0件です','error'); setCustLoading(false); return }
                           const rows = list.map(c => ({
@@ -4369,6 +4385,7 @@ export default function Admin() {
                       if (allResDateTo)   filter.dateTo   = allResDateTo.replace(/-/g,'/')
                       try {
                         const r = await api.adminGetAllReservations(filter)
+                        if (!r.success) { showToast(friendlyServerError(r, '予約データの取得に失敗しました'),'error'); setAllResLoading(false); return }
                         const list = r.list || []
                         if (!list.length) { showToast('該当期間の予約データが0件です','error'); setAllResLoading(false); return }
                         const rows = list.map(res => ({

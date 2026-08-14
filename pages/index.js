@@ -320,9 +320,13 @@ function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected,
   return (
     <div>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-        <button onClick={onPrev} disabled={loading} aria-label={t('前の月')} style={{ padding:'8px 16px', background:'var(--input-bg)', border:'none', borderRadius:8, fontSize:17, cursor: loading ? 'default' : 'pointer', color: loading ? 'var(--disabled-border)' : 'var(--sub)' }}>←</button>
+        {/* 月送りの←→もアイコンのみのボタンで、旧スタイル（padding:8px 16pxのみ）だと実際の高さが
+            フォントサイズ17px相当（約36px）にしかならず44pxに届いていなかった。ノーツ閉じるボタン
+            と同じ理由で見落とされていたため、他のアイコンボタンと同じ44×44の最小タッチターゲットに
+            揃える（Appleデザインチーム視点レビュー・ラウンド46での指摘）。 */}
+        <button onClick={onPrev} disabled={loading} aria-label={t('前の月')} style={{ padding:'8px 16px', background:'var(--input-bg)', border:'none', borderRadius:8, fontSize:17, minWidth:44, minHeight:44, display:'inline-flex', alignItems:'center', justifyContent:'center', cursor: loading ? 'default' : 'pointer', color: loading ? 'var(--disabled-border)' : 'var(--sub)' }}>←</button>
         <span style={{ fontWeight:'bold', fontSize:16, color:'var(--text)' }}>{lang === 'en' ? `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} ${year}` : `${year}年${month+1}月`}</span>
-        <button onClick={onNext} disabled={loading} aria-label={t('次の月')} style={{ padding:'8px 16px', background:'var(--input-bg)', border:'none', borderRadius:8, fontSize:17, cursor: loading ? 'default' : 'pointer', color: loading ? 'var(--disabled-border)' : 'var(--sub)' }}>→</button>
+        <button onClick={onNext} disabled={loading} aria-label={t('次の月')} style={{ padding:'8px 16px', background:'var(--input-bg)', border:'none', borderRadius:8, fontSize:17, minWidth:44, minHeight:44, display:'inline-flex', alignItems:'center', justifyContent:'center', cursor: loading ? 'default' : 'pointer', color: loading ? 'var(--disabled-border)' : 'var(--sub)' }}>→</button>
       </div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', marginBottom:4 }}>
         {(lang === 'en' ? ['Su','Mo','Tu','We','Th','Fr','Sa'] : CAL_WEEK).map((w,i) => (
@@ -413,11 +417,25 @@ export default function Home() {
   // 汎用的な空配列を既定にする（2026-08-08、実機テストを受けての一般化対応）。
   const [settingsCourses, setSettingsCourses] = useState([])
   const [selCourse, setSelCourse] = useState(0)
+  // 下書き復元（restoreBookingDraftIfAny）専用。selCourseは配列の「並び順」を指すインデックスに
+  // 過ぎず、コース名やIDのような安定した識別子ではない（admin.js側もcourses配列を並び替え・
+  // 廃止（discontinued）で操作しており、位置は保存されない）。バックグラウンド中（最大6時間、
+  // BOOKING_DRAFT_MAX_AGE_MS）に店舗側がコースの並び替え・追加・廃止を行うと、復元時に取り直す
+  // 最新のvisibleCoursesでは同じインデックスが別のコース（価格・所要時間・提供時間帯が異なりうる）を
+  // 指してしまい、気づかれないまま送信（createReservation、1511行目付近）されるコースがすり替わる
+  // 恐れがあった（Google CEO視点レビュー・ラウンド46での指摘）。位置ではなく名前で復元し直せるよう、
+  // 「復元待ちのコース名」をここに一時的に保持する（visibleCoursesが確定し次第、下のuseEffectで
+  // 名前が一致するインデックスへ解決する）。
+  const [pendingCourseName, setPendingCourseName] = useState('')
   // ランチ終了時刻の既定値をdailyHours方式（'13:00'、サーバー側defaultDailyHours()）と統一
   // （Microsoft CEO視点レビュー・ラウンド38での指摘、admin.jsのdefTimeRangesと同じ修正）。
+  // labelは現状このファイル内では表示に使われていない（type/start/endのみ参照）が、admin.js側の
+  // defTimeRangesと同じ既定値配列という位置づけのため、ラベルだけ食い違ったままにしておくと
+  // 将来labelを表示に使い始めた際に飲食店専用文言が復活する（業種経営者陣視点レビュー・第46回：
+  // admin.jsの「ランチ」「ディナー」表示を「昼の部」「夜の部」に一般化した際に発見）。
   const [settingsTimeRanges, setSettingsTimeRanges] = useState([
-    { type:'lunch', label:'ランチ', start:'11:30', end:'13:00' },
-    { type:'dinner', label:'ディナー', start:'17:00', end:'21:00' },
+    { type:'lunch', label:'昼の部', start:'11:30', end:'13:00' },
+    { type:'dinner', label:'夜の部', start:'17:00', end:'21:00' },
   ])
   const [settingsDailyHours, setSettingsDailyHours] = useState({})
   const [settingsDateOverrides, setSettingsDateOverrides] = useState({})
@@ -589,12 +607,29 @@ export default function Home() {
   const [myResPhoneUsed, setMyResPhoneUsed] = useState('')
   const [myResNameInput, setMyResNameInput] = useState('')
   const [myResNameUsed, setMyResNameUsed] = useState('')
+  // 自分のキャンセル待ち登録一覧（マイ予約と対になる画面、Meta CEO視点レビュー・審判団ラウンド46で新設）。
+  // 取得失敗はマイ予約本体の表示を妨げない「あくまで付随情報」のため、専用のエラー表示は持たず
+  // 単に空リストのまま表示しない（お客様が困る失敗モードはマイ予約自体の失敗の方であり、
+  // そちらは既存のmyResErrが担う）。
+  const [myWaitlist, setMyWaitlist] = useState([])
+  const [wlCancelingId, setWlCancelingId] = useState(null)
+  const [wlCancelConfirmId, setWlCancelConfirmId] = useState(null)
+  const [wlCancelErr, setWlCancelErr] = useState('')
   const [lateReqId, setLateReqId] = useState(null)
   const [lateReqType, setLateReqType] = useState('change')
   const [lateReqMsg, setLateReqMsg] = useState('')
   const [lateReqSubmitting, setLateReqSubmitting] = useState(false)
   const [lateReqDoneIds, setLateReqDoneIds] = useState(new Set())
   const [lateReqErr, setLateReqErr] = useState('')
+
+  // 下書き（sessionStorage）から入力内容を復元した直後だけtrueにし、お客様に「さっき入力した内容が
+  // そのまま戻ってきた」ことを軽く伝えるための状態（Appleデザインチーム視点レビュー・ラウンド46での
+  // 指摘：これまでは復元処理自体はあっても画面上・スクリーンリーダー上どちらにも一切合図が無く、
+  // 名前・電話番号・選択済みの日時などが無言でいきなり埋まっているように見え、「あれ、もう入力した
+  // っけ？」と戸惑わせる恐れがあった）。エラーではなく一時的な案内なのでrole="status"・politeとし、
+  // 数秒後に自動で消す（フォーム操作の邪魔にならない程度の短い表示に留める）。
+  const [bookingDraftRestored, setBookingDraftRestored] = useState(false)
+  const [changeDraftRestored, setChangeDraftRestored] = useState(false)
 
   // 変更フォーム
   const [changingRes, setChangingRes] = useState(null)
@@ -605,6 +640,15 @@ export default function Home() {
   const [chgErr, setChgErr] = useState('')
   const [chgcfErr, setChgcfErr] = useState('')
   const [chgSubmitting, setChgSubmitting] = useState(false)
+  // 下書き復元（restoreChangeDraftIfAny）専用。バックグラウンド中（最大6時間、BOOKING_DRAFT_MAX_AGE_MS）に
+  // スタッフがadmin.jsから、または本人が別デバイス・別タブから、この予約自体を変更・キャンセル済みだと、
+  // 画面上部の「変更対象の予約」カードは復元直後のchangingRes（メモリ上の古いスナップショット）を
+  // そのまま表示し続け、キャンセル済みの予約に対して新しい日時を選び、確認画面まで丸ごと進めてしまう
+  // （Google CEO視点レビューでの指摘：残席状況＝avail はfetchAvailabilityで必ず取り直しているのに、
+  // 変更対象の予約そのものの現在の状態は一切問い合わせ直していなかった）。復元直後に一度だけ
+  // getMyReservationsで裏取りし、対象が見つからない／既にキャンセル済みだった場合はここをtrueにして
+  // 先へ進めないようにする（見つかった場合はchangingResを最新の内容へ更新するだけで、trueにはしない）。
+  const [chgResGone, setChgResGone] = useState(false)
 
   const effectiveGuests = !guestCountEnabled ? fixedGuestCount : (selGuest === 'konsult' ? '' : selGuest)
   const t = useMemo(() => makeT(lang), [lang])
@@ -1019,7 +1063,7 @@ export default function Home() {
       }).catch(() => {
         setMyRes([])
       }).finally(() => setMyResLoading(false))
-    } else if (restoreChangeDraftIfAny()) {
+    } else if (restoreChangeDraftIfAny(userId, isGuest, authIdToken)) {
       // 変更フローの下書きが残っていれば優先して復元する（新規予約の下書きと変更の下書きが
       // 同時に残っているのは通常あり得ないが、万一両方残っていても、より最近まで操作していた
       // 方＝変更フローを優先する方が実害が小さい。新規予約側の古い下書きはそのまま残しておき、
@@ -1114,7 +1158,22 @@ export default function Home() {
   const SETTINGS_CACHE_KEY = 'kaiya_settings_cache_v1'
   function applySettingsResponse(r) {
     if (!r || !r.success) return
-    if (r.courses && r.courses.length > 0) { setSettingsCourses(r.courses); setSelCourse(0) }
+    if (r.courses && r.courses.length > 0) {
+      setSettingsCourses(r.courses)
+      // このapplySettingsResponseは1回のページ表示で最大2回呼ばれる（①localStorageキャッシュから
+      // 即座に・②裏側のapi.getSettings()が届いた時）。以前は②の時も無条件にselCourseを0へ戻して
+      // いたため、①の表示を見てお客様が自分でコースを選び直した直後（あるいは下書き復元で選択済みの
+      // コースが復元された直後）に②が遅れて届くと、選んだコースが無言で先頭へ巻き戻り、そのまま
+      // 送信（createReservation、1511行目付近）されるコースがすり替わってしまっていた（Google CEO
+      // 視点レビュー・ラウンド46での指摘：GAS側のコールドスタートで②が数秒〜十数秒遅れることは
+      // gas.js側の28秒タイムアウト設定からも珍しくないと分かる）。現在選ばれているコースが新しい
+      // 一覧（廃止済みを除く）の範囲内でまだ有効なら触らず、範囲外になった場合（件数が減った等）
+      // だけ安全側の0へ寄せる。
+      setSelCourse(prev => {
+        const visibleCount = r.courses.filter(c => !c.discontinued).length
+        return (prev >= 0 && prev < visibleCount) ? prev : 0
+      })
+    }
     if (r.timeRanges && r.timeRanges.length > 0) setSettingsTimeRanges(r.timeRanges)
     if (r.dailyHours) setSettingsDailyHours(r.dailyHours)
     if (r.dateOverrides) setSettingsDateOverrides(r.dateOverrides)
@@ -1179,6 +1238,19 @@ export default function Home() {
     }).catch(() => {})
   }, [])
 
+  // pendingCourseName（下書き復元専用、419行目付近のコメント参照）を、コース一覧（visibleCourses）が
+  // 確定するたび名前で解決し直す。LIFFログイン・下書き復元とapi.getSettings()のどちらが先に終わるかは
+  // 実行時のネットワーク状況次第で一定しないため、片方に依存せず「visibleCoursesが変わるたびに再試行」
+  // という形にしてどちらの順序でも正しく解決できるようにする。一覧はあるのに名前が見つからない場合
+  // （店舗側でそのコース名自体を変更・削除した場合）は、無限に待ち続けず既定（selCourseの初期値のまま）
+  // へ諦めて進む。
+  useEffect(() => {
+    if (!pendingCourseName || visibleCourses.length === 0) return
+    const idx = visibleCourses.findIndex(c => c.name === pendingCourseName)
+    if (idx >= 0) setSelCourse(idx)
+    setPendingCourseName('')
+  }, [pendingCourseName, visibleCourses])
+
   // 祝日データが読み込まれたら dateMin を再計算
   useEffect(() => {
     if (Object.keys(holidays).length > 0) {
@@ -1205,11 +1277,15 @@ export default function Home() {
     try {
       sessionStorage.setItem(BOOKING_DRAFT_KEY, JSON.stringify({
         savedAt: Date.now(),
-        selDate, selTime, selGuest, selStaff, selCourse,
+        // selCourseは配列の位置に過ぎず、復元時には並び替え・廃止等で別のコースを指しうる
+        // （419行目付近のpendingCourseNameのコメント参照）ため、復元は名前ベースで行う。
+        // selCourse自体も後方互換・保険として残しておくが、restoreBookingDraftIfAnyは
+        // selCourseNameが取れる限りそちらを優先する。
+        selDate, selTime, selGuest, selStaff, selCourse, selCourseName: visibleCourses[selCourse]?.name || '',
         name, phone, email, q1, q1Other, q3, q3Other, notes, companions,
       }))
     } catch {}
-  }, [screen, selDate, selTime, selGuest, selStaff, selCourse, name, phone, email, q1, q1Other, q3, q3Other, notes, companions])
+  }, [screen, selDate, selTime, selGuest, selStaff, selCourse, visibleCourses, name, phone, email, q1, q1Other, q3, q3Other, notes, companions])
 
   // 送信完了・キャンセル済み等、この下書きがもう不要になった時に消す（次回訪問時に古い内容が
   // 誤って復元されないようにする）。
@@ -1229,7 +1305,11 @@ export default function Home() {
       if (d.selTime) setSelTime(d.selTime)
       if (d.selGuest) setSelGuest(d.selGuest)
       if (d.selStaff) setSelStaff(d.selStaff)
-      if (typeof d.selCourse === 'number') setSelCourse(d.selCourse)
+      // 名前ベースの復元を優先する（1233行目付近のpendingCourseNameのコメント参照）。名前が
+      // 保存されていない古い下書き（このフィールドを追加する前に保存された分）に対しては、
+      // 従来通り位置ベースで復元する後方互換フォールバックのみ残す。
+      if (d.selCourseName) setPendingCourseName(d.selCourseName)
+      else if (typeof d.selCourse === 'number') setSelCourse(d.selCourse)
       if (d.name) setName(d.name)
       if (d.phone) setPhone(d.phone)
       if (d.email) setEmail(d.email)
@@ -1240,6 +1320,9 @@ export default function Home() {
       if (d.notes) setNotes(d.notes)
       if (Array.isArray(d.companions) && d.companions.length) setCompanions(d.companions)
       if (d.selDate) { ensureHolidays(); fetchAvailability(d.selDate, d.selTime || undefined) }
+      // 実際に何かしら復元できた場合のみ案内を出す（空の下書きを復元扱いにしない）。数秒で自動的に消す。
+      setBookingDraftRestored(true)
+      setTimeout(() => setBookingDraftRestored(false), 8000)
     } catch {}
   }
 
@@ -1268,7 +1351,10 @@ export default function Home() {
   }
   // restoreBookingDraftIfAnyと同じくproceedAfterAuthから一度だけ呼ぶ。復元できた場合はtrueを返し、
   // 呼び出し元がその後の画面遷移（'input'ではなく'change'にする）を判断できるようにする。
-  function restoreChangeDraftIfAny() {
+  // userId/isGuest/authIdToken はproceedAfterAuth自身の引数をそのまま受け取る（setProfile直後は
+  // profile state自体がまだ反映されていないため、stateを読まずに引数で受け渡す。proceedAsGuest／
+  // initLiff側で既に同じ理由でこの受け渡し方をしている＝それに倣う）。
+  function restoreChangeDraftIfAny(userId, isGuest, authIdToken) {
     try {
       const raw = sessionStorage.getItem(CHANGE_DRAFT_KEY)
       if (!raw) return false
@@ -1287,10 +1373,50 @@ export default function Home() {
       // 新規予約フローの復元（1233行目付近）と同じ理由で、残席状況は必ず取り直す（バックグラウンド中に
       // 満席になっている可能性があるため、古い判定のまま変更を確定させない）。
       if (d.chgDate) fetchAvailability(d.chgDate, d.chgTime || undefined, d.changingRes.course)
+      // 新規予約フローの復元案内（restoreBookingDraftIfAny）と同じ理由・同じ挙動（数秒で自動的に消す）。
+      setChangeDraftRestored(true)
+      setTimeout(() => setChangeDraftRestored(false), 8000)
+      // ここまではavail（残席）しか取り直しておらず、changingRes（変更対象の予約そのもの）は
+      // バックグラウンド中に古くなった可能性があるメモリ上のスナップショットのまま画面に出てしまう
+      // （Google CEO視点レビュー・ラウンド46での指摘）。本人特定に使えるパラメータ（LINEログイン済みなら
+      // userId・未ログインならmyResPhoneUsed/myResNameUsed）でgetMyReservationsを呼び直し、
+      // 同じidの予約が今も存在し・キャンセル済みでないかを裏取りする。取得自体に失敗した場合（回線不良等）は、
+      // 誤ってブロックしないよう何もしない（最終的な整合性はsubmitChange時のバックエンド側チェックに委ねる）。
+      const resId = d.changingRes.id
+      const phoneUsed = d.myResPhoneUsed || ''
+      const nameUsed = d.myResNameUsed || ''
+      const lookup = (!isGuest && userId)
+        ? api.getMyReservations(userId, undefined, undefined, authIdToken)
+        : (phoneUsed && nameUsed) ? api.getMyReservations('', phoneUsed, nameUsed) : null
+      if (lookup) {
+        lookup.then(r => {
+          if (!r || !r.success || !Array.isArray(r.list)) return
+          const fresh = r.list.find(x => x.id === resId)
+          if (!fresh || fresh.status === 'キャンセル') {
+            setChgResGone(true)
+            setChgErr(t('この予約は既に変更またはキャンセルされているため、続行できません。お手数ですが「マイ予約」から最新の状況をご確認ください。'))
+            return
+          }
+          // 予約自体はまだ有効だが、待機中にスタッフ側等で日時・人数・コース等が変わっていた場合、
+          // 画面上部の「変更対象の予約」カードとchgGuestDisabled（自分の分の除外判定）の両方が
+          // このchangingResを参照しているため、最新の内容に差し替えて古い表示のまま進めさせない。
+          setChangingRes(fresh)
+        }).catch(() => {})
+      }
       return true
     } catch {}
     return false
   }
+
+  // restoreChangeDraftIfAny内のgetMyReservations裏取りは非同期のため、その応答が返ってくる頃には
+  // お客様が既に日時・人数を選んでchgconfirm画面まで進んでしまっている場合がある。その画面のボタンは
+  // disabled={chgResGone}で押せなくなるだけでは「なぜ押せないか」が伝わらないため、chgconfirm側にも
+  // 同じ案内をchgcfErr経由で出す（'change'画面側はchgErrで既に案内済み）。
+  useEffect(() => {
+    if (chgResGone && screen === 'chgconfirm') {
+      setChgcfErr(t('この予約は既に変更またはキャンセルされているため、続行できません。お手数ですが「マイ予約」から最新の状況をご確認ください。'))
+    }
+  }, [chgResGone, screen])
 
   // ===== バリデーション =====
   // エラー発生時、原因の項目までスクロールして分かりやすくする
@@ -1349,6 +1475,15 @@ export default function Home() {
         }
         if (n === 1 && !avail.canBook1)
           return errAt('card-guest', guestUnit === '名' ? t('1名様のご予約はこの日はお受けできません') : (lang === 'en' ? `A single ${guestUnit} reservation is not available for this date` : `1${guestUnit}のご予約はこの日はお受けできません`))
+      } else if (availErr) {
+        // 上のavailLoadingガードは「読み込み中」だけを塞ぎ、再取得が失敗した場合（avail===null かつ
+        // availErr有り）は素通りしてしまっていた（ランダム客層視点レビュー・ラウンド46での指摘）。
+        // 読み込み中でスタックし続けることはない（fetchAvailabilityのcatchが必ずavailLoadingを
+        // falseに戻す）が、その後の容量チェックが丸ごと`if (avail)`の条件でスキップされるため、
+        // 満席かどうか一度も確認できていない枠のまま確認画面へ進めてしまう。特に下書き復元
+        // （restoreBookingDraftIfAny）直後は選択済みの人数がそのまま残っているため見た目上は
+        // 何の異常もなく通過してしまい、最も気づきにくい抜け穴になっていた。
+        return errAt('card-guest', availErr)
       }
     }
     setInputErr('')
@@ -1451,9 +1586,9 @@ export default function Home() {
           const failedDates = (r.results || []).filter(x => !x.success).map(x => x.date)
           const summary = failedDates.length > 0
             ? (lang === 'en'
-              ? `Confirmed: ${r.successCount} / Not confirmed: ${r.failCount} (${failedDates.join(', ')})\nWe'll contact you individually about the occurrence(s) that couldn't be confirmed.`
+              ? `Confirmed: ${r.successCount} / Not confirmed: ${r.failCount} (${failedDates.join(', ')})\nWe'll contact you individually about the booking(s) that couldn't be confirmed.`
               : `確定：${r.successCount}回／不成立：${r.failCount}回（${failedDates.join('、')}）\n不成立の回は個別にご連絡します。`)
-            : (lang === 'en' ? `All ${r.successCount} occurrences confirmed.` : `全${r.successCount}回、すべて確定しました。`)
+            : (lang === 'en' ? `All ${r.successCount} bookings confirmed.` : `全${r.successCount}回、すべて確定しました。`)
           setDone({ detail: baseDetail + '\n\n📅 ' + summary, id: '', pending: false, error: '', backScreen: 'confirm', title: doneTitle, pendingApproval: false })
           clearBookingDraft()
         } else {
@@ -1493,6 +1628,7 @@ export default function Home() {
     // （1194行目付近）がそのまま最新の内容をsessionStorageへ書き戻すので、ここで消しても支障はない。
     clearBookingDraft()
     setMyRes([])
+    setMyWaitlist([])
     setMyResErr('')
     setCancelId(null)
     setScreen('myres')
@@ -1510,6 +1646,12 @@ export default function Home() {
       setMyResErr(t('通信エラーが発生しました。もう一度お試しください。'))
     }
     setMyResLoading(false)
+    // キャンセル待ちの取得はあくまで付随情報のため、失敗してもマイ予約本体の表示には影響させない
+    // （myResErrとは別に扱い、ここの失敗時は単に何も表示しない＝空リストのまま）。
+    try {
+      const wr = await api.getMyWaitlist(profile?.userId || '', undefined, undefined, idToken)
+      if (wr.success) setMyWaitlist(wr.list || [])
+    } catch { /* 付随情報のため無視 */ }
   }
 
   async function lookupMyResByPhone() {
@@ -1529,6 +1671,28 @@ export default function Home() {
       setMyResErr(t('通信エラーが発生しました。もう一度お試しください。'))
     }
     setMyResLoading(false)
+    try {
+      const wr = await api.getMyWaitlist('', myResPhoneInput.trim(), myResNameInput.trim())
+      if (wr.success) setMyWaitlist(wr.list || [])
+    } catch { /* 付随情報のため無視 */ }
+  }
+
+  // キャンセル待ち登録の取り消し（マイ予約のexecCancelと同じ「本当に良いか」確認パターン）。
+  async function execWaitlistCancel(id) {
+    setWlCancelingId(id)
+    setWlCancelErr('')
+    try {
+      const r = await api.cancelMyWaitlistEntry({ id, lineUserId: profile?.userId || '', idToken, phone: myResPhoneUsed, name: myResNameUsed })
+      if (r.success) {
+        setMyWaitlist((prev) => prev.filter((x) => x.id !== id))
+        setWlCancelConfirmId(null)
+      } else {
+        setWlCancelErr(r.error || t('取り消しに失敗しました。お手数ですがお電話にてご連絡ください。'))
+      }
+    } catch {
+      setWlCancelErr(t('通信エラーが発生しました。もう一度お試しいただき、失敗する場合はお電話にてご連絡ください。'))
+    }
+    setWlCancelingId(null)
   }
 
   async function execCancel(id) {
@@ -1602,6 +1766,7 @@ export default function Home() {
     setChgGuests(/^\d+$/.test(String(res.guests)) ? String(res.guests) : '')
     setChgMsg('')
     setChgErr('')
+    setChgResGone(false)
     setAvail(null)
     // wlDone/wlErrは新規予約フローと共有のstate。変更フローに満席日のキャンセル待ち案内を追加したことで、
     // 別の日付・別の画面で過去に登録済み／エラーになった状態がそのまま持ち越されて見えてしまう
@@ -1658,6 +1823,10 @@ export default function Home() {
   }
 
   async function submitChange() {
+    // 確認画面（chgconfirm）へ遷移した後にgetMyReservationsの裏取り応答が届き、chgResGoneがtrueに
+    // なるケースへの最終防波堤（確認へボタン側のガードと同じ理由）。ここで弾いてもOptimistic UI
+    // （setDone→setScreen('done')）にまだ入っていないため、お客様には通常のエラー表示のまま戻せる。
+    if (chgResGone) { setChgcfErr(t('この予約は既に変更またはキャンセルされているため、続行できません。お手数ですが「マイ予約」から最新の状況をご確認ください。')); return }
     setChgSubmitting(true)
     setChgcfErr('')
     const d = parseDate(chgDate)
@@ -1832,6 +2001,13 @@ export default function Home() {
       {/* ── INPUT FORM ── */}
       {screen === 'input' && (
         <div className="scr">
+          {/* 下書き復元の案内（詳細はbookingDraftRestoredの宣言部コメント参照）。エラーではないため
+              role="status"・politeで、見た目も他のエラーバナーと紛らわしくないよう案内色（info）にする。 */}
+          {bookingDraftRestored && (
+            <div role="status" aria-live="polite" style={{ background:'var(--info-bg)', border:'1px solid var(--info-border)', borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:'var(--info-text)' }}>
+              {t('前回入力いただいた内容を復元しました。内容をご確認のうえ、続きをご入力ください')}
+            </div>
+          )}
           {isGuestMode && (
             <div style={{ background:'var(--info-bg)', border:'1px solid var(--info-border)', borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:'var(--info-text)' }}>
               {t('LINEなしでご予約いただけます。ご予約の確認・変更・キャンセルは「マイ予約」から電話番号で検索できます')}{emailCollectionEnabled ? t('（メールアドレスをご登録いただくと確認メールもお送りします）') : ''}{t('。お困りの際はお電話（')}<a href={telHref(bizPhone)} style={{ color:'var(--info-text)', fontWeight:'bold' }}>{bizPhone}</a>{t('）にもご連絡いただけます。')}
@@ -2508,11 +2684,17 @@ export default function Home() {
                       出し分けられるほど作り込まれておらず（visitNounEnはどのプリセットからも設定されない
                       未使用フィールド）、上のOccurrences（t('回数')）・「その回だけ個別にご連絡します」
                       （159行目付近）と同じ、既にアプリ全体で定期予約の単位として使っている業態非依存の
-                      語「occurrence(s)」に統一する。 */}
+                      語に統一する。第45回で選んだ「occurrence(s)」は業態非依存ではあるものの、レンタカー・
+                      車修理・学習塾面談等の実際の店主が読むと臨床的・事務的で不自然（業種経営者陣視点
+                      レビュー・第46回）。同じ定期予約シリーズ機能内で既に「cancel all upcoming
+                      bookings in this series」（lib/i18n.js内、シリーズキャンセル文言）という表現が
+                      使われており、シリーズの1回1回は元々「booking」と呼ばれている。新語を発明せず
+                      アプリ全体の既存語彙に合わせ、「booking(s)」に統一する（全業態でそのまま自然：
+                      レンタカー「8 bookings」、クリニック「8 bookings」、学習塾面談「8 bookings」等）。 */}
                   {(countUnit === '台' || !guestCountEnabled) && Number.isFinite(Number(visibleCourses[selCourse]?.price)) && (
                     <div style={{ fontSize: 12, color: 'var(--sub)', marginTop: 4, lineHeight: 1.7 }}>
                       {lang === 'en'
-                        ? `Total (approx.): ¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()} for ${recurringCount} occurrence${recurringCount === 1 ? '' : 's'}`
+                        ? `Total (approx.): ¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()} for ${recurringCount} booking${recurringCount === 1 ? '' : 's'}`
                         : `合計（目安）：¥${(Number(visibleCourses[selCourse]?.price) * recurringCount).toLocaleString()}（${recurringCount}回分）`}
                     </div>
                   )}
@@ -2922,6 +3104,42 @@ export default function Home() {
               </div>
             ))
           )}
+          {/* キャンセル待ち登録の一覧（マイ予約と対になる画面、Meta CEO視点レビュー・審判団ラウンド46で新設）。
+              電話番号入力待ち・読み込み中・エラー中は出さず、マイ予約本体の表示が確定した後にだけ出す。 */}
+          {!myResNeedsPhone && !myResLoading && !myResErr && myWaitlist.length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <h3 style={{ fontSize: 14, color: 'var(--sub)', marginBottom: 8 }}>{t('🕒 キャンセル待ち登録中')}</h3>
+              {myWaitlist.map((wl) => (
+                <div key={wl.id} className="res-card">
+                  <div className="res-date">{fmtDateLang(wl.date, lang)}</div>
+                  <div className="res-detail">
+                    {wl.time ? `⏰ ${fmtTime(wl.time)}　` : ''}{wl.guests ? `👥 ${guestsDisplay(wl.guests)}` : ''}
+                    {wl.staff ? <><br />🔖 {t('ご指名')}：{wl.staff}</> : null}
+                  </div>
+                  <div className="res-actions">
+                    <button className="btn-cnl" onClick={() => { setWlCancelConfirmId(wl.id); setWlCancelErr('') }}>{t('取り消す')}</button>
+                  </div>
+                  {wlCancelConfirmId === wl.id && (
+                    <div className="cnl-confirm" role="alertdialog" aria-labelledby={`wl-msg-cancel-${wl.id}`}>
+                      <p className="cnl-msg" id={`wl-msg-cancel-${wl.id}`}>{t('このキャンセル待ち登録を取り消しますか？')}</p>
+                      <div className="cnl-btns">
+                        <button className="cnl-yes" disabled={wlCancelingId === wl.id} onClick={() => execWaitlistCancel(wl.id)}>
+                          {wlCancelingId === wl.id ? t('処理中...') : t('はい')}
+                        </button>
+                        <button className="cnl-no" disabled={!!wlCancelingId} onClick={() => { setWlCancelConfirmId(null); setWlCancelErr('') }}>{t('いいえ')}</button>
+                      </div>
+                      {wlCancelErr && (
+                        <p className="cnl-msg" style={{ color: 'var(--red)', marginTop: 8 }}>
+                          {wlCancelErr}<br />
+                          📞 <a href={telHref(bizPhone)} style={{ color: 'var(--green)', fontWeight: 'bold' }}>{bizPhone}</a>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           <AdBannerSlot adBanner={adBanner} place="myres" style={{ marginTop: 12, marginBottom: 4 }} lang={lang} />
           <div className="mt8">
             <button className="btn-s" onClick={() => { setAvail(null); setAvailErr(''); setScreen('input') }}>{t('← 戻る')}</button>
@@ -2932,6 +3150,12 @@ export default function Home() {
       {/* ── CHANGE FORM ── */}
       {screen === 'change' && (
         <div className="scr">
+          {/* 新規予約フローの下書き復元案内（bookingDraftRestored）と同じ理由・同じ見た目。 */}
+          {changeDraftRestored && (
+            <div role="status" aria-live="polite" style={{ background:'var(--info-bg)', border:'1px solid var(--info-border)', borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:'var(--info-text)' }}>
+              {t('前回入力いただいた内容を復元しました。内容をご確認のうえ、続きをご入力ください')}
+            </div>
+          )}
           <div className="card">
             <h2 className="card-lbl">{t('📝　変更対象の予約')}</h2>
             <div className="card-body">
@@ -3155,7 +3379,12 @@ export default function Home() {
             </div>
           </div>
           <div className="mt16">
-            <button className="btn-p" onClick={() => {
+            <button className="btn-p" disabled={chgResGone} onClick={() => {
+              // 下書き復元直後のgetMyReservations裏取り（restoreChangeDraftIfAny、1320行目付近）で
+              // 対象の予約が既に見つからない／キャンセル済みだと判明した場合。ボタン自体はdisabledで
+              // 塞いでいるが、裏取りの応答が遅れてボタンが押されてからtrueになる一瞬のレースもあり
+              // うるため、ここでも同じ理由で二重にガードする（Google CEO視点レビュー・ラウンド46）。
+              if (chgResGone) return
               if (!chgDate) { setChgErr(visitText('新しいご来店日を選択してください')); return scrollToCard('card-chg-date') }
               if (deadlinePassed(chgDate)) { setChgErr(t('選択された日付は予約受付期限を過ぎています')); return scrollToCard('card-chg-date') }
               if (!chgTime) { setChgErr(visitText('新しい来店時間を選択してください')); return scrollToCard('card-chg-time') }
@@ -3165,6 +3394,21 @@ export default function Home() {
               // 直した理由と全く同じレースコンディションがここにもある（ランダム客層視点レビュー・
               // ラウンド45での指摘）。
               if (availLoading) { setChgErr(t('空き状況を確認中です。少し待ってからもう一度お試しください')); return }
+              // 上のavailLoadingガードは「読み込み中」のみを塞ぎ、再取得が失敗した場合（avail===null
+              // かつavailErr有り）は素通りしていた。新規予約フロー側のgoConfirm（1380行目付近）で
+              // 同じ抜け穴を塞いだのと全く同じ理由で、変更フローにも個別に追加する（ランダム客層視点
+              // レビュー・ラウンド46での指摘：新規予約フローで直した教訓が変更フローへ横展開されて
+              // いなかった、これまでも繰り返し起きているパターンの再発）。人数カード自体は
+              // guestCountEnabledがfalseの店舗（人数を扱わない業態）では表示されないため、その場合は
+              // このチェック対象外でよい。
+              if (guestCountEnabled && !avail && availErr) { setChgErr(availErr); return scrollToCard('card-chg-guest') }
+              // avail取得済みでも、下書き復元前から選択済みだった人数が、取り直した最新の残席状況では
+              // 既にご案内できなくなっている場合がある（chgGuestDisabledは人数ボタンの表示のみを
+              // 制御しており、既に選択済みの値そのものは自動では外れない）。
+              if (guestCountEnabled && chgGuestDisabled(parseInt(chgGuests) || 0)) {
+                setChgErr(t('選択した人数ではご案内できません。空き状況をご確認のうえ、もう一度お試しください'))
+                return scrollToCard('card-chg-guest')
+              }
               setChgErr('')
               setScreen('chgconfirm')
             }}>{t('確認へ')}</button>
@@ -3223,7 +3467,7 @@ export default function Home() {
             <div className="mt8" style={{ fontSize: 12, color: 'var(--warning-text)', textAlign: 'center' }}>{t('上記の同意チェックが必要です')}</div>
           )}
           <div className="mt16">
-            <button className="btn-p" disabled={chgSubmitting || !privacyConsent} onClick={submitChange}>
+            <button className="btn-p" disabled={chgSubmitting || !privacyConsent || chgResGone} onClick={submitChange}>
               {chgSubmitting ? t('送信中...') : t('変更を確定する')}
             </button>
             <div className="mt8">

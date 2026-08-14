@@ -75,6 +75,12 @@ function ManualContent({ s, loadErr }) {
   // 導入ウィザード（admin.js）で業種ごとに設定できる呼び方（スタイリスト・整備士・車両等）。
   // admin.js側の画面表示もこの値を使うようになったため、マニュアルもここに合わせて一致させる。
   const itemPeople = (s && s.staffLabel) || '担当者'
+  // 「ご来店」は業態によって呼び方が異なる（クリニックの「ご来院」、面接の「ご来訪」等）ため、
+  // staffLabelと同じくvisitNounで設定化されている（Code.gsのgetSettingsコメント参照）。見積・承認フローは
+  // 特定の業態にロックされたON/OFFトグルではなく配信設定タブからどの業態でも切り替えられるため
+  // （汎用化テスト・ラウンド46での指摘：以前は「来店」に固定していたが、クリニック等がONにした場合に
+  // admin.js側の表記（ご来院）と食い違っていた）、ここも他の箇所と同じくvisitNounを使う。
+  const visitNoun = (s && s.visitNoun) || '来店'
 
   // 章番号（TOC・各章の見出し番号）を、実際に表示される章だけを数えて動的に振り直す。
   // 以前は⑤⑥（キャンセル待ち／臨時休み）が固定の番号で、機能がOFFの店舗ではその番号が
@@ -100,7 +106,7 @@ function ManualContent({ s, loadErr }) {
       { name: '1名利用は相席時のみ受付', on: !!(s.featureFlags && s.featureFlags.singleDinerRequiresCompanyEnabled), desc: 'ONの場合、1名様のご予約は他のお客様の予約が既にある日のみ受付する' },
     ] : []),
     { name: '定期予約（シリーズ予約）', on: recurringBookingOn, desc: '同じ内容の予約を複数回分まとめてお申し込みいただけるようにする（美容院の定期施術・車検の点検等）' },
-    { name: '見積・承認フロー', on: estimateFlowOn, desc: '来店前に金額が確定しない業態向けに、見積金額を提示してお客様の承諾を待てるようにする（承諾後の作業完了通知も含む）' },
+    { name: '見積・承認フロー', on: estimateFlowOn, desc: `${visitNoun}前に金額が確定しない業態向けに、見積金額を提示してお客様の承諾を待てるようにする（承諾後の作業完了通知も含む）` },
     { name: 'キャンセル待ち', on: waitlistOn, desc: '満席の日にお客様がキャンセル待ちに登録できるようにする' },
     { name: '期限後の変更・キャンセル依頼', on: !!(s.featureFlags && s.featureFlags.lateRequestEnabled), desc: '受付期限を過ぎた後も、お客様から店舗への依頼だけは送れるようにする' },
     { name: '増枠（繁忙期の上限を一時的に増やす）', on: !!(s.capacityBoosts && s.capacityBoosts.length > 0), desc: '設定タブで期間を指定して上限を一時的に増やす' },
@@ -183,7 +189,7 @@ function ManualContent({ s, loadErr }) {
           <p>日付をタップすると、その日の予約一覧{s && s.capacityModel !== 'perStaff' && '・残数'}{waitlistOn && '・キャンセル待ちの件数'}が表示され、その日だけ営業時間を変更している場合は<span className="badge b-blue">営業時間変更あり</span>のバッジも出ます。「🔄 最新の予約に更新」を押すと、他のスタッフが今入れた予約もすぐ反映されます。</p>
           <div className="callout tip">
             <span className="icon">💡</span>
-            <div>ご来店日から<b>35日以上前</b>の予約は、一覧が長くなりすぎないよう自動的に別の記録（アーカイブ）に移動し、この一覧には出てこなくなります。古いご予約について問い合わせがあった場合は、店長にご相談ください（データダウンロード機能で確認できます）。</div>
+            <div>ご{visitNoun}日から<b>35日以上前</b>の予約は、一覧が長くなりすぎないよう自動的に別の記録（アーカイブ）に移動し、この一覧には出てこなくなります。古いご予約について問い合わせがあった場合は、店長にご相談ください（データダウンロード機能で確認できます）。</div>
           </div>
           <p>個々の予約にも、電話対応や当日の判断の参考になる印が付きます。</p>
           <table className="legend">
@@ -193,8 +199,8 @@ function ManualContent({ s, loadErr }) {
                   以前はインラインstyleの固定色で実装していたため、ダークモードで他のバッジ（b-red/b-amber/
                   b-blue）と同じ「明るいパステルが暗背景に浮く」問題から漏れていた（Appleデザイン視点
                   レビュー・ラウンド26での指摘）。専用クラス化しダークモード上書きも用意する。 */}
-              <tr><td><span className="badge b-repeat">常連・来店N回目</span></td><td>過去に来店実績があるお客様</td></tr>
-              <tr><td><span className="badge b-blue">初めてのご来店</span></td><td>今回が初回のお客様</td></tr>
+              <tr><td><span className="badge b-repeat">常連・{visitNoun}N回目</span></td><td>過去に{visitNoun}実績があるお客様</td></tr>
+              <tr><td><span className="badge b-blue">初めてのご{visitNoun}</span></td><td>今回が初回のお客様</td></tr>
               <tr><td><span className="badge b-noshow">⚠️過去に無断キャンセルN回</span></td><td>過去に無断キャンセルの記録があるお客様（電話予約時の再確認等の判断材料にしてください）</td></tr>
             </tbody>
           </table>
@@ -258,7 +264,7 @@ function ManualContent({ s, loadErr }) {
             <div className="callout tip">
               <span className="icon">💰</span>
               <div>
-                来店前に金額が確定しない業態向けに、編集画面には<b>「見積」</b>欄があります。金額（必要なら部品代・工賃の内訳）を入力して<b>「見積を送る（お客様に通知されます）」</b>を押すと、お客様にLINE・メールで通知が届き、お客様は自分の画面から<b>承諾・辞退</b>を選べます（辞退してもご来店の予約自体は取り消されません）。承諾された後は<b>「作業完了を通知（お引き取り案内）」</b>を押して、対応が終わったことをお知らせしてください。
+                {visitNoun}前に金額が確定しない業態向けに、編集画面には<b>「見積」</b>欄があります。金額（必要なら部品代・工賃の内訳）を入力して<b>「見積を送る（お客様に通知されます）」</b>を押すと、お客様にLINE・メールで通知が届き、お客様は自分の画面から<b>承諾・辞退</b>を選べます（辞退してもご{visitNoun}の予約自体は取り消されません）。承諾された後は<b>「作業完了を通知（お引き取り案内）」</b>を押して、対応が終わったことをお知らせしてください。
               </div>
             </div>
           )}
