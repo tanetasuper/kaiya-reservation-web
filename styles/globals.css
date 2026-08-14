@@ -7,3 +7,19 @@
 body {
   font-family: -apple-system, 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
 }
+/* 前庭障害（vestibular disorder）配慮：index.js（読み込み中の点滅ドット、無限ループの@keyframes
+   blink）・admin.js（アコーディオンの矢印回転transform）・index.js/admin.js各所のホバー／フォーカス
+   transitionまで、6画面のどこにもprefers-reduced-motionへの対応が一つも無かった（ラウンド52・
+   Appleデザインチーム視点レビューでの指摘：これまで9ラウンドの対応はコントラスト・フォーカス管理・
+   aria-live中心で、動きの category自体は今回が初めての監査）。個別のアニメーションを一つずつ
+   書き換えるのではなく、_app.jsで唯一グローバルに読み込まれるこのファイルに、OS設定で「視差効果を
+   減らす」／「モーションを減らす」を有効にしている利用者向けの全画面共通ルールを1箇所だけ足す
+   （最も低リスクで、将来追加されるアニメーションにも自動的に効く）。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

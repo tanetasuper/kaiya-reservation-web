@@ -3648,9 +3648,16 @@ export default function Home() {
             <div className="card" id="card-chg-time">
               <h2 className="card-lbl">{visitText('⏰　新しい来店時間')}</h2>
               <div className="card-body" style={{ position: 'relative' }}>
+                {/* この時間カードと直後の人数カード（card-chg-guest）は、chgTimeが決まった瞬間から
+                    どちらも同時に画面上に存在し、同じavailLoadingで同じ文言のオーバーレイを重複表示する
+                    （新規予約フローには存在しない、変更フローだけの構造）。両方を素朴にrole="status"化
+                    すると同じ状態変化が2回連続で読み上げられてしまうため（ラウンド52・Appleデザイン
+                    チーム視点レビューでのスクリーンリーダー読み上げシミュレーションでの指摘）、
+                    先に読み上げ順が来るこちらだけをライブリージョンにする（下のcard-chg-guest側は
+                    aria-hiddenにして二重読みを防ぐ）。 */}
                 {availLoading && (
                   <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1 }}>
-                    <span style={{ fontSize:13, color:'var(--hint)' }}>{capacityModel === 'perStaff' ? staffCheckingText() : t('空き状況を確認中...')}</span>
+                    <span role="status" aria-live="polite" style={{ fontSize:13, color:'var(--hint)' }}>{capacityModel === 'perStaff' ? staffCheckingText() : t('空き状況を確認中...')}</span>
                   </div>
                 )}
                 {/* 新規予約フロー（card-time、1324行目付近）には既にある「この日は時間帯がありません」の
@@ -3677,9 +3684,11 @@ export default function Home() {
             <div className="card" id="card-chg-guest">
               <h2 className="card-lbl">{t('👥　人数')}</h2>
               <div className="card-body" style={{ position: 'relative' }}>
+                {/* 上のcard-chg-time側のコメント参照：同じavailLoadingでの重複表示のため、二重読み上げを
+                    避けてこちらはaria-hiddenにする（見た目はそのまま両方に出す）。 */}
                 {availLoading && (
                   <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1 }}>
-                    <span style={{ fontSize:13, color:'var(--hint)' }}>{capacityModel === 'perStaff' ? staffCheckingText() : t('空き状況を確認中...')}</span>
+                    <span aria-hidden="true" style={{ fontSize:13, color:'var(--hint)' }}>{capacityModel === 'perStaff' ? staffCheckingText() : t('空き状況を確認中...')}</span>
                   </div>
                 )}
                 {/* 新規予約フロー（card-guest、1753行目付近）には既にある残席確認失敗時のエラー表示＋

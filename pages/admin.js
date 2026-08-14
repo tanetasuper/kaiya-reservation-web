@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, Children, cloneElement, isValidElement } from 'react'
 import Head from 'next/head'
 import Script from 'next/script'
 import { api, setAdminPassword, setStaffIdentity } from '../lib/api'
@@ -233,7 +233,7 @@ function Toast({ msg, type }) {
 // 備えたカスタムドロップダウン。マウスが使えない・画面が見えない方でも、ネイティブのselectと同じ
 // 手順（Tabで来て矢印で選び、Enterで確定）で操作できるようにする。
 let customSelectIdSeq = 0
-function CustomSelect({ value, onChange, children, style, ariaLabel }) {
+function CustomSelect({ value, onChange, children, style, ariaLabel, 'aria-labelledby': ariaLabelledBy }) {
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
   const [focused, setFocused] = useState(false)
@@ -295,7 +295,8 @@ function CustomSelect({ value, onChange, children, style, ariaLabel }) {
         onFocus={() => setFocused(true)}
         onBlur={() => { setFocused(false); closeList() }}
         tabIndex={0} role="combobox" aria-haspopup="listbox" aria-expanded={open}
-        aria-controls={idBase.current + '-list'} aria-label={ariaLabel}
+        aria-controls={idBase.current + '-list'}
+        {...(ariaLabelledBy ? { 'aria-labelledby': ariaLabelledBy } : { 'aria-label': ariaLabel })}
         aria-activedescendant={open && activeIdx >= 0 ? idBase.current + '-opt-' + activeIdx : undefined}
         style={{
           width:'100%', padding:'9px 12px',
@@ -308,7 +309,12 @@ function CustomSelect({ value, onChange, children, style, ariaLabel }) {
           borderColor: focused ? '#06c755' : 'var(--border)',
           ...style,
         }}>
-        <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+        {/* nowrap+ellipsisで1行固定していたため、長いコース名・スタッフ名等が入ると選択済みの値が
+            見た目上サイレントに切り詰められていた（テキストのみ拡大／ブラウザズームで実際の文字幅が
+            広がるほど発生しやすくなるWCAG 1.4.4/1.4.10観点。ラウンド52・Appleデザインチーム視点
+            レビューでの指摘：index.js .cf-lbl／admin.js .cf-lblで既に修正済みの「white-space:nowrapが
+            自由入力の長文で無音クリップする」問題と同種）。折り返しを許可し、情報が消えないようにする。 */}
+        <span style={{ flex:1, minWidth:0, overflowWrap:'break-word', wordBreak:'break-word' }}>
           {displayLabel}
         </span>
         <span style={{ fontSize:10, color:'var(--text-muted)', marginLeft:6, flexShrink:0 }}>▼</span>
@@ -391,11 +397,26 @@ function Pill({ on, onClick, disabled }) {
   )
 }
 
+// 見出しのdivは視覚的にはラベルに見えるが、これまでhtmlFor/aria-labelledbyでの
+// プログラム的な関連付けが無く、スクリーンリーダーではフィールド名が一切読み上げられなかった
+// （ラウンド52・Appleデザイン／アクセシビリティチーム視点レビューでの指摘：EditModal内の
+// 「お名前」「時間」「コース」等、ほぼ全項目が該当）。見出しdivにidを振り、直下の子要素
+// （複数ある場合は全て）にaria-labelledbyを注入して結び付ける。子が既に自前のaria-label／
+// aria-labelledbyを持つ場合（例：一部のCustomSelect）はそちらを優先し上書きしない。
+let fieldIdSeq = 0
 function Field({ label, children, span }) {
+  const idRef = useRef(null)
+  if (!idRef.current) idRef.current = 'field-lbl-' + (++fieldIdSeq)
+  const labelId = idRef.current
+  const labeledChildren = Children.map(children, child => {
+    if (!isValidElement(child)) return child
+    if (child.props && (child.props['aria-label'] || child.props['aria-labelledby'])) return child
+    return cloneElement(child, { 'aria-labelledby': labelId })
+  })
   return (
     <div style={span ? { gridColumn:'1/-1' } : {}}>
-      <div style={{ fontSize:11, color:'var(--text-secondary)', marginBottom:4 }}>{label}</div>
-      {children}
+      <div id={labelId} style={{ fontSize:11, color:'var(--text-secondary)', marginBottom:4 }}>{label}</div>
+      {labeledChildren}
     </div>
   )
 }
@@ -878,8 +899,13 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
           </div>
         )}
 
+        {/* 20分経過でsaving/保存ボタンが無効化される状態変化（disabled={saving||timedOut}）が、
+            role・aria-liveの無いプレーンなdivでしか伝わっておらず、フォーカスがまだ他の入力欄にある
+            スクリーンリーダー利用者は「保存」が急に押せなくなった理由に気づけなかった
+            （ラウンド52・Appleデザインチーム視点レビューでの指摘：他の同種のブロッキング状態
+            （conflict等）は role="alert" で即時通知しているのに、この画面内で唯一無音だった）。 */}
         {timedOut && (
-          <div style={{ fontSize:12, color:'var(--warning-text)', marginTop:12 }}>
+          <div role="alert" style={{ fontSize:12, color:'var(--warning-text)', marginTop:12 }}>
             ⚠️ この画面を開いてから時間が経ちすぎています。その間に予約内容が変わっている可能性があるため、一度閉じて最新の内容を確認してください。
           </div>
         )}
@@ -1464,6 +1490,15 @@ export default function Admin() {
     bookingMode:'course', itemLabel:'コース', itemIcon:'🍽', staffAssignmentEnabled:false, staffLabel:'担当者', countUnit:'名', visitNoun:'来店', estimatePartsLabel:'部品代', estimateLaborLabel:'工賃', storeSpecificNotifSections:[], bookingSources:SOURCES_DINING, staffRoster:[], guestCountEnabled:true, fixedGuestCount:'1', companionInfoEnabled:true, defaultStayMin:150, defaultCourseName:'コース名', unparseableGuestFallback:8, emailCollectionEnabled:false, enabledLanguages:['ja'],
     adBannerEnabled:false, adBannerImageUrl:'', adBannerText:'', adBannerLinkUrl:'', adBannerPlacements:['done'], storeImageUrl:'',
     adminNotifyChannel:'line', adminAlertEmail:'' })
+  // ゲスト人数（r.guests等）はcountUnitではなく「実際に来る人の頭数」を表す。perStaff業態は
+  // countUnitを資産の単位（例：整備工場が「リフト」に合わせて「台」）に変更していても、来店するお客様
+  // 自身は「台」で数えるものではないため「名」に固定する（お客様画面のguestUnitと全く同じロジック・
+  // 同じ理由。pages/index.js のguestUnit定義参照）。管理画面の予約一覧・検索結果・通知・監査ログ・
+  // キャンセル待ち・ゴミ箱の計6箇所が、この区別をせず常に「名」を決め打ちしていたため、レンタサイクル・
+  // レンタカー等（countUnit='台'）の店舗では、お客様画面が「2台」と案内した予約が管理画面では「2名」と
+  // 表示され、スタッフから見て台数と人数のどちらを表しているか食い違って見えていた
+  // （ラウンド52・業種経営者陣視点レビューでの指摘）。
+  const guestUnit = settings.capacityModel === 'perStaff' ? '名' : (settings.countUnit || '名')
   const resCacheRef = useRef({})
   const settingsSnapshotRef = useRef(null)
   const fsetSnapshotRef = useRef(null)
@@ -2213,7 +2248,19 @@ export default function Admin() {
           q1Question: r.q1Question || 'ご利用目的（任意）',
           q3Question: r.q3Question || 'どのように当店を知りましたか（任意）',
           restaurantName: r.restaurantName || '店舗',
-          restaurantShort: r.restaurantShort || '和光',
+          // Code.gs側のgetConfig()は「フォールバックが貝屋和光の実データ」問題をラウンド24で修正済み
+          // （RESTAURANT_SHORTの既定値は''）だったのに、admin.js側のこの読み込み処理だけ独立に
+          // 同種のバグを抱えていた：r.restaurantShortが空（RESTAURANT_SHORT未設定の店舗）の場合に
+          // 貝屋和光の実際の短縮名「和光」をローカルstateへ補完していた。この画面には短縮名を編集する
+          // 入力欄が無いため店主は気づけないまま、他の設定（電話番号等）を保存するだけで
+          // settings全体がspreadされてsaveSettingsへ送られ、「和光」がRESTAURANT_SHORTとして
+          // サーバーへ書き込まれてしまう。RESTAURANT_SHORTはカレンダー予定タイトルの照合に使われる
+          // 重要な値（Code.gs冒頭のgetConfig()コメント参照）のため、無関係な店舗にこの値が紛れ込むと
+          // 既存予約がカレンダー上で一致しなくなり残席計算から漏れる＝二重予約に直結する
+          // （ラウンド52・業種経営者陣視点レビューでの指摘：「貝屋和光を特別扱いしない」という
+          // 標準ルールに反する実データ漏洩）。他の店舗情報フィールド（restaurantAddress等）と同じ
+          // 汎用的な空文字フォールバックに修正する。
+          restaurantShort: r.restaurantShort || '',
           restaurantTagline: r.restaurantTagline || '',
           restaurantAddress: r.restaurantAddress || '',
           businessCategory: r.businessCategory || '',
@@ -2793,7 +2840,7 @@ export default function Admin() {
                           <span style={{ marginLeft:8 }}>{formatTime(r.time)}〜</span>
                           <span style={{ marginLeft:8 }}>{r.name} 様</span>
                           <span style={{ marginLeft:8, color:'var(--text-muted)' }}>📞 {r.phone}</span>
-                          {r.guests && <span style={{ marginLeft:8 }}>{r.guests}名</span>}
+                          {r.guests && <span style={{ marginLeft:8 }}>{r.guests}{guestUnit}</span>}
                         </div>
                         <button onClick={() => {
                           const [y, m] = r.date.split('/')
@@ -2989,7 +3036,7 @@ export default function Admin() {
                             <div style={{ fontWeight:'bold', fontSize:14 }}>
                               {formatTime(r.time)}〜{formatTime(r.endTime)}
                               <span style={{ marginLeft:10, fontSize:13, color:'var(--text-primary)', fontWeight:'normal' }}>{r.name} 様</span>
-                              <span style={{ marginLeft:6, fontSize:13, color:'var(--text-primary)' }}>{r.guests}名</span>
+                              <span style={{ marginLeft:6, fontSize:13, color:'var(--text-primary)' }}>{r.guests}{guestUnit}</span>
                               {/* 常連バッジ（オレンジ）と同じ配色だと並んだ時に見分けにくいため、
                                   黄系の別配色にする（Appleデザインチーム視点レビューでの指摘） */}
                               {r.status === '要確認' && (
@@ -3259,7 +3306,7 @@ export default function Admin() {
                         <div style={{ fontSize:13, color:'var(--text-primary)', marginBottom:2 }}>
                           {n.date && fmtDate(n.date)}
                           {n.time && <span style={{ marginLeft:8 }}>{formatTime(n.time)}〜{formatTime(n.endTime)}</span>}
-                          {n.guests && <span style={{ marginLeft:8 }}>{n.guests}名</span>}
+                          {n.guests && <span style={{ marginLeft:8 }}>{n.guests}{guestUnit}</span>}
                           {n.phone && <span style={{ marginLeft:8, color:'var(--text-muted)' }}>📞 {n.phone}</span>}
                         </div>
                         {n.type==='change' && n.oldDate && (
@@ -3308,7 +3355,7 @@ export default function Admin() {
                           <span style={{ color:'var(--text-faint)' }}>{a.datetime}</span>
                           <span>{a.name} 様</span>
                           {a.date && <span>{fmtDate(a.date)} {formatTime(a.time)}〜</span>}
-                          {a.guests && <span>{a.guests}名</span>}
+                          {a.guests && <span>{a.guests}{guestUnit}</span>}
                           <span style={{ color:'var(--text-muted)' }}>通知先: {a.notifyTarget}</span>
                         </div>
                         {a.notes && <div style={{ color:'var(--text-muted)', marginTop:2 }}>{a.notes}</div>}
@@ -3345,7 +3392,7 @@ export default function Admin() {
                         <div>
                           <span style={{ fontWeight:'bold' }}>{fmtDate(w.date)}</span>
                           <span style={{ marginLeft:8 }}>{w.name} 様</span>
-                          {w.guests && <span style={{ marginLeft:8 }}>{w.guests}名希望</span>}
+                          {w.guests && <span style={{ marginLeft:8 }}>{w.guests}{guestUnit}希望</span>}
                           {/* 希望時間・希望担当者・通知条件（業種経営者陣視点レビュー・ラウンド30での指摘、
                               ユーザー承認済み）。スタッフが「この待機者は何時・誰を待っているか」を
                               一覧から把握できるようにする。 */}
@@ -3390,7 +3437,7 @@ export default function Admin() {
                           <span style={{ fontWeight:'bold' }}>{fmtDate(t.date)}</span>
                           <span style={{ marginLeft:8 }}>{t.time}〜</span>
                           <span style={{ marginLeft:8 }}>{t.name} 様</span>
-                          {t.guests && <span style={{ marginLeft:8 }}>{t.guests}名</span>}
+                          {t.guests && <span style={{ marginLeft:8 }}>{t.guests}{guestUnit}</span>}
                           <span style={{ marginLeft:8, color:'var(--text-muted)' }}>削除: {t.deletedAt}{t.deletedBy ? `（${t.deletedBy}）` : ''}</span>
                         </div>
                         <button onClick={() => restoreRes(t)} style={{ ...btnGray, fontSize:11, padding:'4px 10px' }}>復元</button>
@@ -4206,6 +4253,11 @@ export default function Admin() {
                     <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:6 }}>
                       「1日単位」は少人数・長時間滞在の店向けです。回転寿司・カジュアルチェーンのように1日に何度も席が入れ替わる業種は「時間帯単位」を選ぶと、実際には空いている時間帯まで満席と表示されるのを防げます。
                       「担当者単位」は美容室（スタイリスト）・整備工場（整備士・リフト）・病院（医師）・面接（面接官）等、店全体の席数ではなく「担当者1人（または1リフト等）が同時に何件対応できるか」で予約可否が決まる業種向けです。この場合、上の「{settings.staffLabel || '担当者'}の指名機能」を必ずONにし、{settings.staffLabel || '担当者'}一覧に登録した名前・同時対応可能数が実際の予約可否の判定に使われます（お客様が「指名なし」を選んだ場合は、空いている{settings.staffLabel || '担当者'}に自動で割り当てます）。
+                      {/* ラウンド51レビューで新規発見の制約（フィットネスジムの個人トレーニング＋グループクラス、
+                          学習塾の個別指導＋集団授業等）を、実際にこの欄で「担当者単位」を選ぼうとしている
+                          店主が選ぶ前に知れるよう開示する（ラウンド52・業種経営者陣視点レビュー。機能自体の
+                          追加ではなく、既存の制約の周知のみ）。 */}
+                      この店舗が「1人：1人」の予約（トレーナーの個人指導・個別面談等）と「1人：大人数」の予約（グループクラス・集団授業等、人数上限のある教室単位の予約）を両方とも扱う予定がある場合はご注意ください。「担当者単位」は店舗全体で1つしか設定できないため、両方を同時に正しく容量管理することはできません（どちらか一方を選ぶか、当面は片方だけをこのシステムで運用してください）。
                     </div>
                     {settings.capacityModel === 'perStaff' && settings.staffRoster.length === 0 && (
                       <div style={{ marginTop:10, padding:'10px 14px', background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, fontSize:12, color:'var(--danger-text)', fontWeight:'bold' }}>
@@ -5058,7 +5110,12 @@ export default function Admin() {
                       <span style={{ fontSize:13, width:160 }}>キャンセル待ち機能</span>
                       <Pill on={fset.waitlist.enabled} onClick={() => updateFset('waitlist','enabled', !fset.waitlist.enabled)} />
                     </div>
-                    <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>満席の日にお客様がキャンセル待ちに登録できるようになります（先着順、ご案内の確保はいたしません）。</div>
+                    {/* 「満席」は「席」前提の言葉のため、countUnitが「台」（レンタカー・レンタサイクル・
+                        「リフト」呼びの整備工場等）の店舗では実際に無い「席」という語だけが残ってしまう
+                        （ラウンド52・業種経営者陣視点レビューでの指摘）。index.js（capacityText）と
+                        同じ置き換えルールをここでも適用する。countUnit既定「名」の業態（perStaff系含む）は
+                        従来通り「満席」のまま（主観が割れる言い換えを強制しない）。 */}
+                    <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>{settings.countUnit === '台' ? '満車' : '満席'}の日にお客様がキャンセル待ちに登録できるようになります（先着順、ご案内の確保はいたしません）。</div>
                   </div>
 
                   <div style={{ marginBottom:14 }}>
