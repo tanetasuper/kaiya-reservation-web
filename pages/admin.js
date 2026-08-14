@@ -460,10 +460,27 @@ function AdminCalendar({ year, month, dayData, selected, onSelect }) {
             color: i===0?'var(--danger-solid)':i===6?'var(--info-text)':'var(--text-muted)' }}>{dn}</div>
         ))}
       </div>
+      {/* このマス（button）はラウンド52のEditModal/Field/CustomSelect修正（ラベルが視覚的には
+          見えていても、スクリーンリーダーへプログラム的に伝わっていなかった問題）と同じ「見た目の
+          周辺インフラ（フォーカストラップ・ライブリージョン等）は既にラウンド48/49で検証済みだから、
+          このマス自体のアクセシブルネーム／状態も大丈夫だろう」という思い込みのまま、単体では一度も
+          検証されていなかった（ラウンド53・総仕上げレビューでの指摘）。姉妹コンポーネントである
+          お客様向けCustomerCalendar（index.js）は選択マスにaria-pressedと状態込みのaria-labelを
+          既に備えているのに、この管理画面側だけ「日付の数字とN件／休/-Nという短いテキストが
+          子要素として並んでいるので読み上げ自体はされる」段階で止まっており、①選択中／本日という
+          状態がボーダー色のみで伝わらない、②「15 3件」のような断片的な読み上げで「8月15日・
+          確定予約3件」という意味が伝わりにくい、という2点が未対応だった。CustomerCalendarと同じ
+          パターン（aria-pressed・aria-current・意味の通る日本語のaria-label）に揃える。 */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2 }}>
         {cells.map((cell,i) => cell===null ? <div key={`e${i}`}/> : (
           <button key={cell.ymd}
             onClick={() => onSelect(cell.isSelected ? null : cell.ymd)}
+            aria-pressed={cell.isSelected}
+            aria-current={cell.isToday ? 'date' : undefined}
+            aria-label={`${month+1}月${cell.d}日`
+              + (cell.isBlocked ? '　休業日' : cell.seatBlock ? `　受付停止枠${cell.seatBlock}件` : '')
+              + (cell.count > 0 ? `　確定予約${cell.count}件` : '')
+              + (cell.isSelected ? '　選択中' : '')}
             style={{
               padding:'4px 2px', textAlign:'center', fontSize:12, cursor:'pointer',
               border: cell.isSelected ? '2px solid var(--info-text)' : cell.isToday ? '2px solid #06c755' : '1px solid transparent',
