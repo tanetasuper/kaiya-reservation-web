@@ -86,6 +86,10 @@ function ManualContent({ s, loadErr }) {
   // 同じくCode.gs側のgetSettingsが返す値をそのまま使う。
   const estimatePartsLabel = (s && s.estimatePartsLabel) || '部品代'
   const estimateLaborLabel = (s && s.estimateLaborLabel) || '工賃'
+  // 見積承諾後の「作業完了を通知」ボタンの呼び方も同じ理由で設定化された（業種経営者陣視点レビュー・
+  // ラウンド51での指摘：admin.js側のボタン表記を変更したのに、このマニュアルだけ旧文言
+  // 「作業完了を通知（お引き取り案内）」のまま残るとadmin.js実物の画面と食い違う）。
+  const estimateWorkDoneLabel = (s && s.estimateWorkDoneLabel) || '作業完了'
 
   // 章番号（TOC・各章の見出し番号）を、実際に表示される章だけを数えて動的に振り直す。
   // 以前は⑤⑥（キャンセル待ち／臨時休み）が固定の番号で、機能がOFFの店舗ではその番号が
@@ -269,7 +273,7 @@ function ManualContent({ s, loadErr }) {
             <div className="callout tip">
               <span className="icon" aria-hidden="true">💰</span>
               <div>
-                {visitNoun}前に金額が確定しない業態向けに、編集画面には<b>「見積」</b>欄があります。金額（必要なら{estimatePartsLabel}・{estimateLaborLabel}の内訳）を入力して<b>「見積を送る（お客様に通知されます）」</b>を押すと、お客様にLINE・メールで通知が届き、お客様は自分の画面から<b>承諾・辞退</b>を選べます（辞退してもご{visitNoun}の予約自体は取り消されません）。承諾された後は<b>「作業完了を通知（お引き取り案内）」</b>を押して、対応が終わったことをお知らせしてください。
+                {visitNoun}前に金額が確定しない業態向けに、編集画面には<b>「見積」</b>欄があります。金額（必要なら{estimatePartsLabel}・{estimateLaborLabel}の内訳）を入力して<b>「見積を送る（お客様に通知されます）」</b>を押すと、お客様にLINE・メールで通知が届き、お客様は自分の画面から<b>承諾・辞退</b>を選べます（辞退してもご{visitNoun}の予約自体は取り消されません）。承諾された後は<b>「{estimateWorkDoneLabel}を通知」</b>を押して、対応が終わったことをお知らせしてください。
               </div>
             </div>
           )}
