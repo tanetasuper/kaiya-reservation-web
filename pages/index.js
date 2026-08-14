@@ -92,6 +92,26 @@ function isValidEmailFormat(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e
 // 緩やかな範囲にする（厳密な市外局番・番号帯の検証はしない）。
 function isValidPhoneFormat(phone) { const digits = (phone || '').replace(/[^0-9]/g, ''); return digits.length >= 8 && digits.length <= 15 }
 
+// pages/admin.js側にはCode.gsが返す技術的な内部エラー文字列（「GAS returned non-JSON」
+// 「GASタイムアウト (>28s)」「GAS_URL not set」や、pages/api/gas.js（両画面が共有する同じプロキシ）
+// のcatch節がそのまま返すerr.message＝予測できない英語の例外メッセージ）を非エンジニア向けの日本語に
+// 差し替えるfriendlyServerErrorがあるが、このお客様向け画面には同等の保護が一切無く、r.errorを
+// そのまま画面に出す全箇所（送信・キャンセル待ち登録・予約確定・マイ予約検索・キャンセル・
+// 見積応答・定期予約まとめてキャンセル・変更）で、通信障害時にお客様が英語の内部エラー文字列を
+// そのまま見せられうる状態だった（ラウンド50での指摘）。同じ判定ロジックを移植する。ただし宛先は
+// 「開発担当」ではなくお客様がお店に連絡できる「お電話」とし、内部実装の詳細（GAS等）は
+// お客様には見せない。
+const TECHNICAL_ERROR_PATTERNS = [/^GAS returned non-JSON/, /^GASタイムアウト/, /^GAS_URL not set/]
+const HAS_JAPANESE_RE = /[぀-ヿ㐀-鿿]/
+function friendlyServerError(r, fallback, t) {
+  const raw = r && r.error
+  if (!raw) return fallback
+  if (TECHNICAL_ERROR_PATTERNS.some(p => p.test(raw)) || !HAS_JAPANESE_RE.test(raw)) {
+    return t('一時的な問題が発生しました。しばらくしてから、もう一度お試しください。繰り返し発生する場合はお電話にてご連絡ください。')
+  }
+  return raw
+}
+
 // LINEアプリ内ブラウザ（LIFF）では通常の<a target="_blank">が確実に開くとは限らない（LINE公式の
 // 推奨はliff.openWindow()の使用）。プライバシーページへのリンクが同意チェックの唯一の確認手段のため、
 // アプリ内では専用APIで開き、それ以外（PC・外部ブラウザ）では通常のリンク遷移に任せる
@@ -527,6 +547,11 @@ export default function Home() {
   // staffLabel/countUnitと同じ考え方で店舗設定から取得する（累積指摘の総棚卸しでの指摘、ユーザー承認済み）。
   const [visitNoun, setVisitNoun] = useState('来店')
   const [visitNounEn, setVisitNounEn] = useState('visit')
+  // 見積内訳（部品代・工賃）は車修理工場を想定した固定の日本語文言のまま全業態に出続けていた
+  // （業種経営者陣視点レビュー・ラウンド49で指摘、ラウンド50で設定化）。visitNounと同じ考え方で
+  // 店舗設定から取得する。
+  const [estimatePartsLabel, setEstimatePartsLabel] = useState('部品代')
+  const [estimateLaborLabel, setEstimateLaborLabel] = useState('工賃')
   const [guestCountEnabled, setGuestCountEnabled] = useState(true)
   const [fixedGuestCount, setFixedGuestCount] = useState('1')
   const [companionInfoEnabled, setCompanionInfoEnabled] = useState(true)
@@ -703,6 +728,17 @@ export default function Home() {
   // そもそも"visit"という語を含まないため、visitNounEnの出番は無い）。
   function visitText(jaTemplate) {
     return lang === 'en' ? t(jaTemplate) : jaTemplate.replace(/来店/g, visitNoun)
+  }
+  // 見積内訳（部品代・工賃）のラベルも同じ問題を抱えていた（業種経営者陣視点レビュー・ラウンド49で
+  // 指摘、ラウンド50で設定化）。t()の辞書は固定の日本語キー'部品代'/'工賃'にしか対応していないため、
+  // 店舗がラベルをカスタマイズしていない（既定値のまま）場合だけ辞書引きで多言語対応し、カスタマイズ
+  // 済みの場合はestimateWorkDoneMessage（サーバーから来る自由記述テンプレート）と同じく、店舗が
+  // 入力した文字列をそのまま両言語で表示する（自由入力を翻訳する手段が無いため）。
+  function estimatePartsLabelText() {
+    return estimatePartsLabel === '部品代' ? t('部品代') : estimatePartsLabel
+  }
+  function estimateLaborLabelText() {
+    return estimateLaborLabel === '工賃' ? t('工賃') : estimateLaborLabel
   }
   const showTimeCard = !!selDate
   const showGuestCard = guestCountEnabled && !!(selDate && selTime)
@@ -984,7 +1020,7 @@ export default function Home() {
         setLateReqId(null)
         setLateReqMsg('')
       } else {
-        setLateReqErr(r.error || t('送信に失敗しました'))
+        setLateReqErr(friendlyServerError(r, t('送信に失敗しました'), t))
       }
     } catch {
       setLateReqErr(t('通信エラーが発生しました。お電話にてご連絡ください'))
@@ -1040,7 +1076,7 @@ export default function Home() {
         notifyCondition, language: lang,
       })
       if (r.success) setWlDone(true)
-      else setWlErr(r.error || t('キャンセル待ちの登録に失敗しました'))
+      else setWlErr(friendlyServerError(r, t('キャンセル待ちの登録に失敗しました'), t))
     } catch {
       setWlErr(t('通信エラーが発生しました。もう一度お試しください。'))
     }
@@ -1290,6 +1326,8 @@ export default function Home() {
     if (r.countUnit) setCountUnit(r.countUnit)
     if (r.visitNoun) setVisitNoun(r.visitNoun)
     if (r.visitNounEn) setVisitNounEn(r.visitNounEn)
+    if (r.estimatePartsLabel) setEstimatePartsLabel(r.estimatePartsLabel)
+    if (r.estimateLaborLabel) setEstimateLaborLabel(r.estimateLaborLabel)
     if (r.guestCountEnabled !== undefined) setGuestCountEnabled(!!r.guestCountEnabled)
     if (r.fixedGuestCount) setFixedGuestCount(String(r.fixedGuestCount))
     if (r.companionInfoEnabled !== undefined) setCompanionInfoEnabled(!!r.companionInfoEnabled)
@@ -1701,7 +1739,7 @@ export default function Home() {
           setDone({ detail: baseDetail + '\n\n📅 ' + summary, id: '', pending: false, error: '', backScreen: 'confirm', title: doneTitle, pendingApproval: false })
           clearBookingDraft()
         } else {
-          setDone(prev => ({ ...prev, pending: false, error: r.error || t('予約に失敗しました') }))
+          setDone(prev => ({ ...prev, pending: false, error: friendlyServerError(r, t('予約に失敗しました'), t) }))
         }
         setSubmitting(false)
         return
@@ -1714,10 +1752,14 @@ export default function Home() {
         setDone({ detail: doneMsg, id: `${t('予約番号：')}${r.reservationId}`, pending: false, error: '', backScreen: 'confirm', title: doneTitle, pendingApproval: isKasshiki })
         clearBookingDraft()
       } else {
-        setDone(prev => ({ ...prev, pending: false, error: r.error || t('予約に失敗しました') }))
+        setDone(prev => ({ ...prev, pending: false, error: friendlyServerError(r, t('予約に失敗しました'), t) }))
       }
-    } catch (e) {
-      setDone(prev => ({ ...prev, pending: false, error: t('通信エラーが発生しました') + ': ' + (e?.message || '') }))
+    } catch {
+      // 以前はcatch (e)でJSの例外オブジェクトのe.message（"TypeError: Failed to fetch"等、
+      // 英語かつ内部実装依存の技術的な文字列）をそのまま連結して表示しており、この画面の他の
+      // catch節（execCancel等）が「もう一度お試しください」で止めているのと不揃いだった上、
+      // お客様に読めても意味のない内容だった（ラウンド50での指摘）。他のcatch節と揃える。
+      setDone(prev => ({ ...prev, pending: false, error: t('通信エラーが発生しました') }))
     }
     setSubmitting(false)
   }
@@ -1775,7 +1817,7 @@ export default function Home() {
         setMyResPhoneUsed(myResPhoneInput.trim())
         setMyResNameUsed(myResNameInput.trim())
         setMyResNeedsPhone(false)
-      } else { setMyResErr(r.error || t('予約の読み込みに失敗しました。もう一度お試しください。')) }
+      } else { setMyResErr(friendlyServerError(r, t('予約の読み込みに失敗しました。もう一度お試しください。'), t)) }
     } catch {
       setMyResErr(t('通信エラーが発生しました。もう一度お試しください。'))
     }
@@ -1818,7 +1860,7 @@ export default function Home() {
           setMyWaitlist((prev) => prev.map((x) => (x.id === id ? { ...x, cancelled: true, alreadyGone: true } : x)))
           setWlCancelConfirmId(null)
         } else {
-          setWlCancelErr(r.error || t('取り消しに失敗しました。お手数ですがお電話にてご連絡ください。'))
+          setWlCancelErr(friendlyServerError(r, t('取り消しに失敗しました。お手数ですがお電話にてご連絡ください。'), t))
         }
       }
     } catch {
@@ -1836,7 +1878,7 @@ export default function Home() {
         setMyRes((prev) => prev.map((x) => (x.id === id ? { ...x, status: 'キャンセル' } : x)))
         setCancelId(null)
       } else {
-        setCancelErr(r.error || t('キャンセルに失敗しました。お手数ですがお電話にてご連絡ください。'))
+        setCancelErr(friendlyServerError(r, t('キャンセルに失敗しました。お手数ですがお電話にてご連絡ください。'), t))
       }
     } catch {
       setCancelErr(t('通信エラーが発生しました。もう一度お試しいただき、失敗する場合はお電話にてご連絡ください。'))
@@ -1855,7 +1897,7 @@ export default function Home() {
       if (r.success) {
         setMyRes((prev) => prev.map((x) => (x.id === id ? { ...x, estimateStatus: accept ? '承諾済み' : '辞退済み' } : x)))
       } else {
-        setEstimateRespondErr(r.error || t('操作に失敗しました。お手数ですがお電話にてご連絡ください。'))
+        setEstimateRespondErr(friendlyServerError(r, t('操作に失敗しました。お手数ですがお電話にてご連絡ください。'), t))
         setEstimateRespondErrId(id)
       }
     } catch {
@@ -1880,7 +1922,7 @@ export default function Home() {
       if (r.success) {
         setMyRes((prev) => prev.map((x) => (x.seriesId === seriesId && x.date >= toYMD(new Date()).replace(/-/g, '/') ? { ...x, status: 'キャンセル' } : x)))
       } else {
-        setSeriesCancelErr(r.error || t('キャンセルに失敗しました。お手数ですがお電話にてご連絡ください。'))
+        setSeriesCancelErr(friendlyServerError(r, t('キャンセルに失敗しました。お手数ですがお電話にてご連絡ください。'), t))
         setSeriesCancelErrId(seriesId)
       }
     } catch {
@@ -1985,7 +2027,7 @@ export default function Home() {
         setDone({ detail: baseDetail + t('\n\nLINEに変更確認メッセージをお送りしました。'), id: `${t('予約番号：')}${changingRes.id}`, pending: false, error: '', backScreen: 'chgconfirm', title: t('変更が完了しました') })
         clearChangeDraft()
       } else {
-        setDone(prev => ({ ...prev, pending: false, error: r.error || t('変更に失敗しました') }))
+        setDone(prev => ({ ...prev, pending: false, error: friendlyServerError(r, t('変更に失敗しました'), t) }))
       }
     } catch {
       setDone(prev => ({ ...prev, pending: false, error: t('通信エラーが発生しました') }))
@@ -2156,7 +2198,14 @@ export default function Home() {
           )}
           {isGuestMode && (
             <div style={{ background:'var(--info-bg)', border:'1px solid var(--info-border)', borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:'var(--info-text)' }}>
-              {t('LINEなしでご予約いただけます。ご予約の確認・変更・キャンセルは「マイ予約」から電話番号で検索できます')}{emailCollectionEnabled ? t('（メールアドレスをご登録いただくと確認メールもお送りします）') : ''}{t('。お困りの際はお電話（')}<a href={telHref(bizPhone)} style={{ color:'var(--info-text)', fontWeight:'bold' }}>{bizPhone}</a>{t('）にもご連絡いただけます。')}
+              {/* お客様パネル視点レビュー・ラウンド50での指摘：この案内は「電話番号で検索できます」とだけ
+                  述べていたが、実際のマイ予約検索（下のcard-lbl「📞　お名前・電話番号でご予約を確認」・
+                  getMyReservations）は電話番号だけでなくお名前も一致しないとヒットしない（ラウンド47以降、
+                  電話番号だけの一致で他人の予約が見えてしまう穴を塞ぐために追加された二要素確認）。
+                  ここだけ「電話番号だけで検索できる」という古い（現状と食い違う）案内が残っており、
+                  実際にマイ予約画面へ進んで名前欄も求められたお客様が「言っていたことと違う」と戸惑う
+                  可能性があった。マイ予約画面本体の案内文言と表現を揃える。 */}
+              {t('LINEなしでご予約いただけます。ご予約の確認・変更・キャンセルは「マイ予約」からお名前・電話番号で検索できます')}{emailCollectionEnabled ? t('（メールアドレスをご登録いただくと確認メールもお送りします）') : ''}{t('。お困りの際はお電話（')}<a href={telHref(bizPhone)} style={{ color:'var(--info-text)', fontWeight:'bold' }}>{bizPhone}</a>{t('）にもご連絡いただけます。')}
             </div>
           )}
           {/* コース（コース無しモードでは選択UI自体を表示しない） */}
@@ -2978,7 +3027,10 @@ export default function Home() {
         <div className="scr" ref={screenRef}>
           {myResNeedsPhone ? (
             <div className="card">
-              <h2 className="card-lbl">{t('📞　電話番号でご予約を確認')}</h2>
+              {/* お客様パネル視点レビュー・ラウンド50での指摘：この見出しだけ「電話番号で確認」のままで、
+                  直下のヒント文（お名前・電話番号の両方が必要）や実際のフォーム（お名前欄が電話番号欄より
+                  先にある）と矛盾していた。二要素確認の追加（ラウンド47以降）前の名残と見られる。 */}
+              <h2 className="card-lbl">{t('📞　お名前・電話番号でご予約を確認')}</h2>
               <div className="card-body">
                 <p className="hint" style={{ marginBottom: 10 }}>{t('LINEをご利用でないため、ご予約時にご登録いただいたお名前・電話番号でご予約を検索します。')}</p>
                 <input type="text" value={myResNameInput} aria-label={t('お名前')}
@@ -3110,7 +3162,7 @@ export default function Home() {
                         両方揃っている時だけ表示する（片方だけでは内訳として意味をなさないため）。 */}
                     {res.estimatePartsAmount && res.estimateLaborAmount && (
                       <div style={{ fontSize: 12, color: 'var(--sub)', marginBottom: 4 }}>
-                        {t('部品代')}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{t('工賃')}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
+                        {estimatePartsLabelText()}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{estimateLaborLabelText()}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
                       </div>
                     )}
                     {res.estimateNote && <div style={{ fontSize: 13, color: 'var(--sub)', marginBottom: 8 }}>{res.estimateNote}</div>}
@@ -3154,7 +3206,7 @@ export default function Home() {
                         総額のみに縮退し、「完了」に進むまでメモ・内訳を見返す手段が無かった）。 */}
                     {res.estimatePartsAmount && res.estimateLaborAmount && (
                       <div style={{ fontSize: 12, marginTop: 2 }}>
-                        {t('部品代')}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{t('工賃')}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
+                        {estimatePartsLabelText()}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{estimateLaborLabelText()}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
                       </div>
                     )}
                     {res.estimateNote && <div style={{ fontSize: 12, marginTop: 2 }}>{res.estimateNote}</div>}
@@ -3183,7 +3235,7 @@ export default function Home() {
                         案内には既に内訳が再掲されているのに、画面側だけ総額のみだった）。 */}
                     {res.estimatePartsAmount && res.estimateLaborAmount && (
                       <div style={{ fontWeight: 'normal', fontSize: 12, marginTop: 2 }}>
-                        {t('部品代')}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{t('工賃')}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
+                        {estimatePartsLabelText()}：¥{(parseFloat(res.estimatePartsAmount) || 0).toLocaleString()}　{estimateLaborLabelText()}：¥{(parseFloat(res.estimateLaborAmount) || 0).toLocaleString()}
                       </div>
                     )}
                     {/* 内訳と同じ理由（ラウンド43での指摘）：メモも「提示済み」カードにしかなく、「完了」まで
