@@ -209,10 +209,17 @@ function dlXlsx(rows, sheetName, filename) {
 }
 
 // ── Shared UI ─────────────────────────────────────────────────────
+// このトーストは保存成功・保存失敗・自動ログアウト警告（「操作が無いまま1分経過すると自動的に
+// ログアウトします」等、1465行目付近）まで含め、管理画面のほぼ全ての操作結果フィードバックを担う
+// 唯一の経路なのに、role・aria-live のいずれも持たず、スクリーンリーダー利用者には出現したことすら
+// 一切伝わっていなかった（お客様画面index.jsの各種role="alert"/role="status"と比べて、この管理画面の
+// 主要フィードバック経路だけが完全に無音だった。Appleデザインチーム視点レビュー・ラウンド49での指摘）。
+// エラーは即座に気づく必要があるためrole="alert"（暗黙のaria-live="assertive"）、成功等の通知は
+// 作業の妨げにならないrole="status"（暗黙のaria-live="polite"）にする。
 function Toast({ msg, type }) {
   if (!msg) return null
   return (
-    <div style={{
+    <div role={type==='error' ? 'alert' : 'status'} style={{
       position:'fixed', bottom:24, left:'50%', transform:'translateX(-50%)',
       background: type==='error' ? 'var(--danger-solid)' : '#06c755',
       color:'#fff', padding:'12px 24px', borderRadius:8,
@@ -450,6 +457,13 @@ function AdminCalendar({ year, month, dayData, selected, onSelect }) {
               <span style={{ fontSize:9, background:'#06c755', color:'#fff', borderRadius:8,
                 padding:'1px 4px', marginTop:2, lineHeight:1.4 }}>{cell.count}件</span>
             )}
+            {/* 休業日は背景色（danger-bg）だけで表現されており、色の区別が付きにくい利用者には
+                「受付停止枠（seatBlock、'-N'という文字が付く）」との違いが伝わらなかった
+                （色のみのステータス表現。Appleデザインチーム視点レビュー・ラウンド49での指摘）。
+                seatBlockと同じく短いテキストラベルを添える。 */}
+            {cell.isBlocked && (
+              <span style={{ fontSize:9, color:'var(--danger-solid)', marginTop:1, lineHeight:1 }}>休</span>
+            )}
             {cell.seatBlock && !cell.isBlocked && (
               <span style={{ fontSize:9, color:'var(--warning-text)', marginTop:1, lineHeight:1 }}>-{cell.seatBlock}</span>
             )}
@@ -470,8 +484,49 @@ function CalNav({ year, month, onPrev, onNext }) {
   )
 }
 
+// ── モーダル共通のフォーカストラップ ─────────────────────────────
+// EditModal・AddModal・SetupWizardの3つは、いずれも画面全体を覆うposition:fixed/inset:0の
+// フルスクリーンモーダルなのに、role="dialog"・aria-modal・フォーカストラップ・Escapeキーでの
+// 閉じる操作のいずれも無かった。お客様向け画面（pages/index.js）の注意事項ポップアップ
+// （notesCloseBtnRef/notesConfirmBtnRef、審判団ラウンド48での指摘）では既にこの問題が修正済みで、
+// スクリーンリーダー利用者はTabキーで背後の画面（予約一覧やカレンダー）へフォーカスが漏れ出したり、
+// モーダルが開いたこと自体に気づけなかったりする状態のまま、より高頻度・長時間使われる管理画面側の
+// 3モーダルだけ未対応で取り残されていた（Appleデザインチーム視点レビュー・ラウンド49での指摘）。
+// index.jsは1箇所だけだったため個別実装で足りたが、admin.jsには同じ要件のモーダルが3つあるため、
+// 共通フックにまとめてドリフトを防ぐ。フォーカス可能要素はTabキー押下のたびに再計算する
+// （CustomSelectのドロップダウンや、staffAssignmentEnabled等の条件によって出入りするフィールドなど、
+// 開いた瞬間には存在しない要素が後から追加/削除されるため、開いた瞬間の一度きりの計算では
+// 対応できない）。CustomSelect自身がEscapeキーで自分のドロップダウンだけを閉じる際は
+// e.preventDefault()を呼ぶので、e.defaultPrevented を見てその場合はモーダルごと閉じてしまわないよう
+// 上位に伝播させない（ネストしたウィジェット自身のEscape処理を尊重する）。
+const MODAL_FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+function useModalFocusTrap(containerRef, closeBtnRef, onClose) {
+  useEffect(() => {
+    closeBtnRef.current?.focus()
+    const container = containerRef.current
+    if (!container) return
+    function onKeyDown(e) {
+      if (e.defaultPrevented) return
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); return }
+      if (e.key !== 'Tab') return
+      const focusables = Array.from(container.querySelectorAll(MODAL_FOCUSABLE_SELECTOR)).filter(el => el.offsetParent !== null)
+      if (focusables.length === 0) return
+      const first = focusables[0], last = focusables[focusables.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    container.addEventListener('keydown', onKeyDown)
+    return () => container.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+}
+
 // ── Edit Modal ────────────────────────────────────────────────────
 function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, dateOverrides, staffAssignmentEnabled, staffRoster, courses, itemLabel, visitNoun, bookingSources, guestCountEnabled, fixedGuestCount, maxSeats, estimateFlowEnabled }) {
+  // フォーカストラップ用（上のuseModalFocusTrap参照）。closeBtnRefは開いた瞬間の初期フォーカス先も兼ねる。
+  const modalRef = useRef(null)
+  const closeBtnRef = useRef(null)
+  useModalFocusTrap(modalRef, closeBtnRef, onClose)
   // 人数選択が1〜8名の固定8択で、席数（maxSeats）が8を超える店舗（貸切パーティ等）では
   // スタッフが手動登録できない実バグだった（業種経営者陣視点レビュー・ラウンド29での指摘）。
   // 既定の8択は維持しつつ、実際の席数がそれより多い店舗ではそこまで選べるようにする。
@@ -603,13 +658,18 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
   }
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:200,
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="editModalTitle"
+      style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:200,
       display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}
       onClick={e => e.target===e.currentTarget && onClose()}>
       <div style={{ background:'var(--bg-card)', borderRadius:16, padding:24, width:'100%', maxWidth:520, maxHeight:'90vh', overflowY:'scroll', WebkitOverflowScrolling:'touch' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-          <h2 style={{ fontSize:16, fontWeight:'bold' }}>予約編集 <span style={{ fontSize:11, color:'var(--text-faint)', fontWeight:'normal' }}>{res.id}</span></h2>
-          <button onClick={onClose} aria-label="閉じる" style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-muted)' }}>✕</button>
+          <h2 id="editModalTitle" style={{ fontSize:16, fontWeight:'bold' }}>予約編集 <span style={{ fontSize:11, color:'var(--text-faint)', fontWeight:'normal' }}>{res.id}</span></h2>
+          {/* 他のアイコンのみの閉じるボタン（お客様画面index.jsの注意事項ポップアップ、ラウンド45での
+              指摘）と同じく、実際のタップ可能領域がフォントサイズ22px相当しか無かったため、
+              44×44の最小タッチターゲットに揃える。 */}
+          <button ref={closeBtnRef} onClick={onClose} aria-label="閉じる"
+            style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-muted)', minWidth:44, minHeight:44, display:'inline-flex', alignItems:'center', justifyContent:'center' }}>✕</button>
         </div>
         <div className="modalGrid">
           <Field label="お名前"><input type="text"   value={data.name}   style={mIStyle} onChange={set('name')}   /></Field>
@@ -831,6 +891,10 @@ function EditModal({ res, onClose, onSaved, showToast, timeSlots, dailyHours, da
 
 // ── Add Modal ─────────────────────────────────────────────────────
 function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots, dailyHours, dateOverrides, staffAssignmentEnabled, staffRoster, courses, itemLabel, visitNoun, bookingSources, kasshikiEnabled, guestCountEnabled, fixedGuestCount, maxSeats, isOwner }) {
+  // フォーカストラップ用（上のuseModalFocusTrap参照）。closeBtnRefは開いた瞬間の初期フォーカス先も兼ねる。
+  const modalRef = useRef(null)
+  const closeBtnRef = useRef(null)
+  useModalFocusTrap(modalRef, closeBtnRef, onClose)
   // 人数選択が1〜8名の固定8択で、席数（maxSeats）が8を超える店舗（貸切パーティ等）では
   // スタッフが手動登録できない実バグだった（業種経営者陣視点レビュー・ラウンド29での指摘）。
   // 既定の8択は維持しつつ、実際の席数がそれより多い店舗ではそこまで選べるようにする。
@@ -876,13 +940,16 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots, dailyHo
   }
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:200,
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="addModalTitle"
+      style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:200,
       display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}
       onClick={e => e.target===e.currentTarget && onClose()}>
       <div style={{ background:'var(--bg-card)', borderRadius:16, padding:24, width:'100%', maxWidth:520, maxHeight:'90vh', overflowY:'scroll', WebkitOverflowScrolling:'touch' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-          <h2 style={{ fontSize:16, fontWeight:'bold' }}>新規予約登録</h2>
-          <button onClick={onClose} aria-label="閉じる" style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-muted)' }}>✕</button>
+          <h2 id="addModalTitle" style={{ fontSize:16, fontWeight:'bold' }}>新規予約登録</h2>
+          {/* EditModalの閉じるボタンと同じ理由（44×44の最小タッチターゲット）。 */}
+          <button ref={closeBtnRef} onClick={onClose} aria-label="閉じる"
+            style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-muted)', minWidth:44, minHeight:44, display:'inline-flex', alignItems:'center', justifyContent:'center' }}>✕</button>
         </div>
         <div className="modalGrid">
           <Field label={`${visitNoun || '来店'}日 *`}>  <input type="date" value={data.date} style={mIStyle} onChange={set('date')} /></Field>
@@ -1001,7 +1068,7 @@ function AddModal({ initialDate, onClose, onAdded, showToast, timeSlots, dailyHo
           )}
         </div>
         {err && (
-          <div style={{ marginTop:10, background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 14px', fontSize:13, color:'var(--danger-solid)', whiteSpace:'pre-line' }}>
+          <div role="alert" style={{ marginTop:10, background:'var(--danger-bg)', border:'1px solid var(--danger-border)', borderRadius:8, padding:'10px 14px', fontSize:13, color:'var(--danger-solid)', whiteSpace:'pre-line' }}>
             {err}
           </div>
         )}
@@ -1033,6 +1100,26 @@ function SetupWizard({ onClose, onApply }) {
   const [presetKey, setPresetKey] = useState('')
   const [answers, setAnswers] = useState({}) // id -> value
   const [customText, setCustomText] = useState({}) // id -> string（自由入力時）
+  // ウィザードはpick→questions→confirmと画面内容が丸ごと入れ替わる複数ステップ構成なのに、ステップが
+  // 切り替わったこと自体をスクリーンリーダーへ伝える手段が無かった（お客様画面index.jsの画面遷移時の
+  // screenRef、審判団ラウンド48での指摘、と同じ問題）。ステップごとのコンテンツ領域にフォーカスを
+  // 移し、次のステップの内容を続けて読み上げさせる。このuseEffectを下のuseModalFocusTrapより先に
+  // 宣言することで、初回マウント時はこちら（step変化のeffect）が先に発火し、直後にuseModalFocusTrap
+  // 側の「閉じるボタンへフォーカス」が上書きする形になり、開いた瞬間の挙動はEditModal/AddModalと
+  // 揃ったまま（閉じるボタンが最初のフォーカス先）、ステップ変更時（stepだけが変わりcloseBtnRef側の
+  // effectは再実行されない）はこちらだけが効いてステップ内容側へフォーカスが移る、という両立を狙う。
+  const stepContentRef = useRef(null)
+  useEffect(() => {
+    const el = stepContentRef.current
+    if (el) {
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1')
+      el.focus({ preventScroll: true })
+    }
+  }, [step])
+  // フォーカストラップ用（上のuseModalFocusTrap参照）。closeBtnRefは開いた瞬間の初期フォーカス先も兼ねる。
+  const modalRef = useRef(null)
+  const closeBtnRef = useRef(null)
+  useModalFocusTrap(modalRef, closeBtnRef, onClose)
 
   const preset = VERTICAL_PRESETS.find(p => p.key === presetKey)
   const hasQuestions = !!(preset && preset.questions && preset.questions.length > 0)
@@ -1064,13 +1151,16 @@ function SetupWizard({ onClose, onApply }) {
   const categories = [...new Set(VERTICAL_PRESETS.map(p => p.category))]
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:210,
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="wizardModalTitle"
+      style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:210,
       display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}
       onClick={e => e.target===e.currentTarget && onClose()}>
       <div style={{ background:'var(--bg-card)', borderRadius:16, padding:24, width:'100%', maxWidth:560, maxHeight:'90vh', overflowY:'scroll', WebkitOverflowScrolling:'touch' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
-          <h2 style={{ fontSize:16, fontWeight:'bold' }}>導入ウィザード</h2>
-          <button onClick={onClose} aria-label="閉じる" style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-muted)' }}>✕</button>
+          <h2 id="wizardModalTitle" style={{ fontSize:16, fontWeight:'bold' }}>導入ウィザード</h2>
+          {/* EditModal/AddModalの閉じるボタンと同じ理由（44×44の最小タッチターゲット）。 */}
+          <button ref={closeBtnRef} onClick={onClose} aria-label="閉じる"
+            style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-muted)', minWidth:44, minHeight:44, display:'inline-flex', alignItems:'center', justifyContent:'center' }}>✕</button>
         </div>
         {/* 進行状況（質問が無い業種は2ステップ、ある業種は3ステップ） */}
         <div style={{ display:'flex', gap:6, alignItems:'center', marginBottom:16 }}>
@@ -1081,7 +1171,7 @@ function SetupWizard({ onClose, onApply }) {
         </div>
 
         {step === 'pick' && (
-          <>
+          <div ref={stepContentRef}>
             <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:16 }}>お店・施設の業種に近いものを選んでください。次の画面で、業種に応じた追加の質問（呼び方・運用ルール等）に答えるだけで設定が組み立てられます。</div>
             {categories.map(cat => (
               <div key={cat} style={{ marginBottom:16 }}>
@@ -1100,11 +1190,11 @@ function SetupWizard({ onClose, onApply }) {
                 </div>
               </div>
             ))}
-          </>
+          </div>
         )}
 
         {step === 'questions' && preset && (
-          <>
+          <div ref={stepContentRef}>
             <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:16 }}>「{preset.label}」向けの追加の質問です。分からなければ既定のままで問題ありません。</div>
             <div style={{ display:'grid', gap:16 }}>
               {preset.questions.map(q => (
@@ -1134,11 +1224,11 @@ function SetupWizard({ onClose, onApply }) {
               <button onClick={() => setStep('pick')} style={btnGray}>← 業種を選び直す</button>
               <button onClick={() => setStep('confirm')} style={btnGreen}>次へ</button>
             </div>
-          </>
+          </div>
         )}
 
         {step === 'confirm' && preset && (
-          <>
+          <div ref={stepContentRef}>
             <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:12 }}>この内容で設定します。コース一覧・営業時間・料金は変更されません（Q1・Q2の選択肢はこの業種向けの内容に変更されます）。</div>
             {/* buildPresetPatchはpreset.settings/preset.fsetの該当セクションを丸ごとコピーする
                 （質問で答えた項目だけの差分ではない）。そのため、初回導入時ではなく既に運用中の
@@ -1172,7 +1262,7 @@ function SetupWizard({ onClose, onApply }) {
               <button onClick={() => setStep(preset.questions.length ? 'questions' : 'pick')} style={btnGray}>← 戻る</button>
               <button onClick={() => { const { settingsPatch, fsetPatch } = buildResult(); onApply(settingsPatch, fsetPatch, preset.label, needsStaff); }} style={btnGreen}>この内容で適用する</button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -1229,6 +1319,12 @@ export default function Admin() {
   // になり、後者を前者と誤解して調査が止まりかねなかった（スタッフ視点レビュー・ラウンド29での指摘）。
   const [calDayEventsError, setCalDayEventsError] = useState(false)
   const [editRes,       setEditRes]       = useState(null)
+  // EditModal/AddModal/SetupWizardを開いた際に押されたボタン（DOM要素）を覚えておき、モーダルを
+  // 閉じた時にそこへフォーカスを戻すためのref（お客様画面index.jsの注意事項ポップアップと同様、
+  // モーダルを閉じた後にフォーカスが失われて（＝<body>まで戻って）しまう問題への対処。
+  // Appleデザインチーム視点レビュー・ラウンド49での指摘）。予約一覧は行ごとに複数の「編集」ボタンが
+  // 存在するため、固定のrefではなくクリックされた要素をその都度差し替える。
+  const modalTriggerRef = useRef(null)
   const [cancelingResId, setCancelingResId] = useState(null)
   const [bulkCancelling, setBulkCancelling] = useState(false)
   const [showAddModal,  setShowAddModal]  = useState(false)
@@ -1370,7 +1466,13 @@ export default function Admin() {
   const [editCourseIdx,  setEditCourseIdx]   = useState(-1)
   const [editCourse,     setEditCourse]      = useState({})
   const [showAddCourse,  setShowAddCourse]   = useState(false)
-  const [newCourse,      setNewCourse]       = useState({ name:'', price:'', description:'', duration:150, mealType:'dinner', imageUrl:'' })
+  // mealTypeの既定は'both'（対応時間帯を絞らない）。以前は飲食店の「大半のコースはディナー」という
+  // 前提を引き継いだ'dinner'固定だったため、営業時間を2枠（例：午前・午後シフト、休憩前後）に分けて
+  // 使う飲食店以外の業態（美容院・整備工場等）で、新規追加した{itemLabel}が片方の枠にしか出ない
+  // 事故が起きうる。1枠しか使わない店舗（多くの業態はこちら）は'both'でも'dinner'でも挙動は同じ
+  // （唯一有効な枠にしか出ないため）なので、より安全な既定に統一する（業種経営者陣視点レビュー・
+  // 第49回での指摘）。
+  const [newCourse,      setNewCourse]       = useState({ name:'', price:'', description:'', duration:150, mealType:'both', imageUrl:'' })
 
   // ── Password change ────
   const [pwCurrent,   setPwCurrent]   = useState('')
@@ -1922,6 +2024,9 @@ export default function Admin() {
       return next
     })
     setShowWizard(false)
+    // 「この内容で適用する」ボタン経由（下のSetupWizardのonCloseコールバックを通らない）でも
+    // フォーカスをウィザードを開いた時のボタンへ戻す（onClose側と同じ理由）。
+    modalTriggerRef.current?.focus()
     showToast(needsStaff
       ? `「${presetLabel}」の設定を適用しました。${settingsPatch.staffLabel || '担当者'}一覧に最低1${settingsPatch.countUnit || '名'}登録した上で、「設定」タブと「配信設定」タブそれぞれの保存ボタンを押してください。`
       : `「${presetLabel}」の設定を適用しました。内容を確認し、「設定」タブと「配信設定」タブそれぞれの保存ボタンを押してください。`)
@@ -2581,7 +2686,10 @@ export default function Admin() {
       {/* Tabs：スタッフ（role:staff）は予約の登録・確認・変更のみのため「予約一覧」タブしか表示しない */}
       <div style={{ background:'var(--bg-card)', borderBottom:'1px solid var(--border)', display:'flex' }}>
         {[['reservations','予約一覧'], ['notifications','通知'], ['settings','設定'], ['notif-settings','通知設定'], ['feature-settings','配信設定'], ['store-specific','店舗固有機能']].filter(([id]) => isOwner || id === 'reservations').map(([id,label]) => (
-          <button key={id} onClick={() => setTab(id)}
+          // 選択中タブは緑の下線・文字色という色だけで表現されており、aria-current等の意味づけが
+          // 一切無かったため、スクリーンリーダー利用者にはどのタブが今開いているか伝わらなかった
+          // （色のみのステータス表現。Appleデザインチーム視点レビュー・ラウンド49での指摘）。
+          <button key={id} onClick={() => setTab(id)} aria-current={tab===id ? 'true' : undefined}
             style={{
               flex:1, padding:'13px 4px', border:'none', background:'transparent',
               fontSize:13, fontWeight:'bold', cursor:'pointer',
@@ -2601,9 +2709,11 @@ export default function Admin() {
               // 一目で分かる●1文字＋濃い色に変更（Appleデザインチーム視点レビューでの指摘）。
               // var(--warning-text)は白背景とのコントラスト比が約3.8:1でテキストとしては4.5:1に届かないため、
               // さらに濃いvar(--warning-text)に変更（ラウンド13の同視点レビューでの再指摘）。
-              <span title="未保存の変更があります" style={{ position:'absolute', top:6, right:'50%', transform:'translateX(150%)',
+              // title属性だけではスクリーンリーダーのブラウズモードで読み上げられるとは限らないため
+              // （ラウンド49での指摘）、aria-labelも併記する。●自体はaria-hiddenにして二重に読ませない。
+              <span title="未保存の変更があります" aria-label="未保存の変更があります" style={{ position:'absolute', top:6, right:'50%', transform:'translateX(150%)',
                 color:'var(--warning-text)', fontSize:14, fontWeight:'bold', lineHeight:1 }}>
-                ●
+                <span aria-hidden="true">●</span>
               </span>
             )}
           </button>
@@ -2912,7 +3022,7 @@ export default function Admin() {
                             {r.email && <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:2 }}>✉️ {r.email}</div>}
                           </div>
                           <div style={{ display:'flex', gap:6, flexShrink:0, alignItems:'center', flexWrap:'wrap' }}>
-                            <button onClick={() => setEditRes(r)} style={btnBlue}>編集</button>
+                            <button onClick={e => { modalTriggerRef.current = e.currentTarget; setEditRes(r) }} style={btnBlue}>編集</button>
                             {r.status !== 'キャンセル' && (
                               <button
                                 disabled={cancelingResId===r.id}
@@ -2935,7 +3045,7 @@ export default function Admin() {
                 )}
 
                 {/* ＋新規登録 */}
-                <button onClick={() => { setAddInitDate(selectedDate); setShowAddModal(true) }}
+                <button onClick={e => { modalTriggerRef.current = e.currentTarget; setAddInitDate(selectedDate); setShowAddModal(true) }}
                   style={{ ...btnGreen, fontSize:13, marginBottom:10 }}>
                   ＋ 新規登録
                 </button>
@@ -3147,7 +3257,11 @@ export default function Admin() {
 
             {/* 操作ログ（削除不可・参照専用） */}
             <div style={{ marginTop:24, paddingTop:16, borderTop:'1px solid var(--border-light)' }}>
+              {/* ▶/▼という記号の見た目だけで開閉状態を表しており、下の「質問なしで直接適用する」
+                  トグル（aria-expandedあり）と同じ「開閉」パターンなのにaria-expandedが無かった
+                  （同一ファイル内での不統一。Appleデザインチーム視点レビュー・ラウンド49での指摘）。 */}
               <button onClick={() => { const next = !showAuditLog; setShowAuditLog(next); if (next && auditLog.length === 0) loadAuditLog() }}
+                aria-expanded={showAuditLog}
                 style={{ ...btnGray, fontSize:13, width:'100%', textAlign:'left' }}>
                 {showAuditLog ? '▼' : '▶'} 操作ログを表示（管理者の追加・変更・削除の記録。削除できません）
               </button>
@@ -3186,6 +3300,7 @@ export default function Admin() {
             {/* キャンセル待ち */}
             <div style={{ marginTop:16, paddingTop:16, borderTop:'1px solid var(--border-light)' }}>
               <button onClick={() => { const next = !showWaitlist; setShowWaitlist(next); if (next) loadWaitlist() }}
+                aria-expanded={showWaitlist}
                 style={{ ...btnGray, fontSize:13, width:'100%', textAlign:'left' }}>
                 {showWaitlist ? '▼' : '▶'} キャンセル待ちを表示 {waitlist.length > 0 && `（${waitlist.length}件）`}
               </button>
@@ -3229,6 +3344,7 @@ export default function Admin() {
             {/* ゴミ箱（削除した予約の復元） */}
             <div style={{ marginTop:16, paddingTop:16, borderTop:'1px solid var(--border-light)' }}>
               <button onClick={() => { const next = !showTrash; setShowTrash(next); if (next) loadTrash() }}
+                aria-expanded={showTrash}
                 style={{ ...btnGray, fontSize:13, width:'100%', textAlign:'left' }}>
                 {showTrash ? '▼' : '▶'} 🗑 ゴミ箱を表示（削除した予約を復元できます。90日で自動的に消去されます）
               </button>
@@ -3292,7 +3408,7 @@ export default function Admin() {
                       混ざっていた（業種経営者陣視点レビュー・第43回での指摘）。全業態に当てはまる
                       表現に統一する。 */}
                   <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>この店舗の業種に近いものを選ぶと、コース選択・容量の数え方・呼び方・お客様への質問（Q1・Q2）の選択肢・貸切等の追加機能等の関連設定がまとめて変更されます。適用後も内容は自由に調整でき、コース一覧・営業時間・料金は変更されません。</div>
-                  <button onClick={() => setShowWizard(true)} style={{ ...btnGreen, marginBottom:10 }}>
+                  <button onClick={e => { modalTriggerRef.current = e.currentTarget; setShowWizard(true) }} style={{ ...btnGreen, marginBottom:10 }}>
                     業種を選んで設定する
                   </button>
                   <button type="button" onClick={() => setShowQuickApply(v => !v)}
@@ -3335,7 +3451,7 @@ export default function Admin() {
                     </div>
                   )}
                 </div>
-                {showWizard && <SetupWizard onClose={() => setShowWizard(false)} onApply={applyWizardResult} />}
+                {showWizard && <SetupWizard onClose={() => { setShowWizard(false); modalTriggerRef.current?.focus() }} onApply={applyWizardResult} />}
 
                 {/* 複数店舗展開向け：業態・運用ルールをファイルとして書き出し／別の店舗のデプロイに読み込む */}
                 <div style={{ background:'var(--bg-card)', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px var(--shadow-sm)' }}>
@@ -4193,7 +4309,9 @@ export default function Admin() {
                                 第46回）。mealType自体（'lunch'/'dinner'/'both'）はサーバー側フィールド名と
                                 対応しているため変更せず、画面の表示だけ業態非依存にする。 */}
                             <Field label="対応時間帯">
-                              <CustomSelect value={editCourse.mealType||'dinner'} style={sStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
+                              {/* 既存データにmealTypeが無い（旧データ・移行データ）場合のフォールバックも
+                                  'both'に統一（第49回レビュー、下のnewCourse既定値と同じ理由）。 */}
+                              <CustomSelect value={editCourse.mealType||'both'} style={sStyle} onChange={e=>setEditCourse(c=>({...c,mealType:e.target.value}))}>
                                 <option value="lunch">昼の部</option>
                                 <option value="dinner">夜の部</option>
                                 <option value="both">共通</option>
@@ -4254,7 +4372,7 @@ export default function Admin() {
                         <Field label="説明文" span><input type="text" value={newCourse.description} placeholder={`${settings.itemLabel || 'コース'}の内容や特徴を入力`} style={iStyle} onChange={e=>setNewCourse(c=>({...c,description:e.target.value}))} /></Field>
                         <Field label="所要時間（分）※1439分（24時間)未満のみ対応"><input type="number" min="1" max="1439" value={newCourse.duration} placeholder="150" style={iStyle} onChange={e=>setNewCourse(c=>({...c,duration:e.target.value}))} /></Field>
                         <Field label="対応時間帯">
-                          <CustomSelect value={newCourse.mealType||'dinner'} style={sStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
+                          <CustomSelect value={newCourse.mealType||'both'} style={sStyle} onChange={e=>setNewCourse(c=>({...c,mealType:e.target.value}))}>
                             <option value="lunch">昼の部</option>
                             <option value="dinner">夜の部</option>
                             <option value="both">共通</option>
@@ -4264,8 +4382,8 @@ export default function Admin() {
                         <div style={{ gridColumn:'1/-1', display:'flex', gap:8, marginTop:4 }}>
                           <button onClick={() => {
                             if (!newCourse.name) return
-                            setSettings(s=>({...s, courses:[...s.courses,{name:newCourse.name,price:parseInt(newCourse.price)||0,description:newCourse.description,duration:parseInt(newCourse.duration)||150,mealType:newCourse.mealType||'dinner',imageUrl:newCourse.imageUrl||''}]}))
-                            setNewCourse({name:'',price:'',description:'',duration:150,mealType:'dinner',imageUrl:''})
+                            setSettings(s=>({...s, courses:[...s.courses,{name:newCourse.name,price:parseInt(newCourse.price)||0,description:newCourse.description,duration:parseInt(newCourse.duration)||150,mealType:newCourse.mealType||'both',imageUrl:newCourse.imageUrl||''}]}))
+                            setNewCourse({name:'',price:'',description:'',duration:150,mealType:'both',imageUrl:''})
                             setShowAddCourse(false)
                           }} style={{ padding:'8px 18px', background:'#06c755', color:'#fff', border:'none', borderRadius:8, fontSize:13, cursor:'pointer' }}>追加する</button>
                           <button onClick={() => setShowAddCourse(false)} style={btnGray}>キャンセル</button>
@@ -5009,8 +5127,8 @@ export default function Admin() {
       {/* Modals */}
       {editRes && (
         <EditModal res={editRes}
-          onClose={() => setEditRes(null)}
-          onSaved={() => { setEditRes(null); refreshRes() }}
+          onClose={() => { setEditRes(null); modalTriggerRef.current?.focus() }}
+          onSaved={() => { setEditRes(null); refreshRes(); modalTriggerRef.current?.focus() }}
           showToast={showToast}
           timeSlots={adminTimeSlots}
           dailyHours={settings.dailyHours || defDailyHours}
@@ -5028,8 +5146,8 @@ export default function Admin() {
       )}
       {showAddModal && (
         <AddModal initialDate={addInitDate}
-          onClose={() => setShowAddModal(false)}
-          onAdded={() => { setShowAddModal(false); refreshRes() }}
+          onClose={() => { setShowAddModal(false); modalTriggerRef.current?.focus() }}
+          onAdded={() => { setShowAddModal(false); refreshRes(); modalTriggerRef.current?.focus() }}
           showToast={showToast}
           timeSlots={adminTimeSlots}
           dailyHours={settings.dailyHours || defDailyHours}
@@ -5061,8 +5179,16 @@ export default function Admin() {
           --border-light: #eee;
           --text-primary: #333;
           --text-secondary: #555;
-          --text-muted: #888;
-          --text-faint: #aaa;
+          /* --text-muted（背景#fffに対し旧#888で約3.5:1）・--text-faint（同じく旧#aaaで約2.3:1）は
+             どちらもWCAG AAの通常文字4.5:1に届いておらず、しかも設定タブの操作説明・空状態表示
+             （「読み込み中」「記録はまだありません」等）・警告文など、装飾ではなく読む必要がある
+             文章に全域で使われていた（--text-mutedだけで約100箇所、--text-faintは約80箇所）。
+             OFFピルの文字色を--text-mutedから--text-secondaryへ変更した際（375行目付近、
+             Appleデザインチーム視点レビュー）と同じ問題が、この2変数の既定値そのものに残っていた
+             （ラウンド49での指摘）。値だけを4.5:1超になるよう底上げし、明暗の相対関係
+             （faintの方がmutedより淡い）は維持する。 */
+          --text-muted: #666666;
+          --text-faint: #767676;
           --shadow-sm: rgba(0,0,0,.08);
           --btn-secondary-solid: #555;
           --success-bg: #e8f5e9;
@@ -5098,7 +5224,9 @@ export default function Admin() {
             --text-primary: #e8eaed;
             --text-secondary: #b0b6bc;
             --text-muted: #8a9199;
-            --text-faint: #6b7178;
+            /* --text-faintは背景#1c2126に対し旧#6b7178で約3.3:1（WCAG AAの4.5:1未達）。
+               上の:root基本値側と同じ理由（ラウンド49での指摘）で底上げする。 */
+            --text-faint: #868c93;
             --shadow-sm: rgba(0,0,0,.4);
             --btn-secondary-solid: #4a5058;
             --success-bg: #16301d;
@@ -5136,7 +5264,7 @@ export default function Admin() {
           --text-primary: #e8eaed;
           --text-secondary: #b0b6bc;
           --text-muted: #8a9199;
-          --text-faint: #6b7178;
+          --text-faint: #868c93;
           --shadow-sm: rgba(0,0,0,.4);
           --btn-secondary-solid: #4a5058;
           --success-bg: #16301d;
@@ -5171,8 +5299,9 @@ export default function Admin() {
           --border-light: #eee;
           --text-primary: #333;
           --text-secondary: #555;
-          --text-muted: #888;
-          --text-faint: #aaa;
+          /* コントラスト修正の理由は上の:root（基本値）側のコメント参照（ラウンド49）。 */
+          --text-muted: #666666;
+          --text-faint: #767676;
           --shadow-sm: rgba(0,0,0,.08);
           --btn-secondary-solid: #555;
           --success-bg: #e8f5e9;

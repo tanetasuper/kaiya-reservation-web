@@ -819,15 +819,20 @@ export default function Home() {
   const isSimpleMode = bookingMode === 'simple'
   const selStayMin = visibleCourses[selCourse]?.duration || STAY_MIN
   const courseTimeSlots = useMemo(() => {
-    // コース無しモードでは特定コースの提供時間帯に縛られず、その日有効な時間帯（ランチ・ディナー等）を全て出す
-    const mealType = isSimpleMode ? 'both' : (visibleCourses[selCourse]?.mealType || 'dinner')
+    // コース無しモードでは特定コースの提供時間帯に縛られず、その日有効な時間帯（ランチ・ディナー等）を全て出す。
+    // mealType未設定（旧データ・admin.js未編集のまま等）のフォールバックは'dinner'ではなく'both'にする
+    // （業種経営者陣視点レビュー・第49回：営業時間を2枠に分けて使う飲食店以外の業態で、片方の枠にしか
+    // 出ないという飲食店の「大半のコースはディナー」前提が残っていた。admin.js側のmealType既定値も
+    // 同時に'both'へ変更済み）。
+    const mealType = isSimpleMode ? 'both' : (visibleCourses[selCourse]?.mealType || 'both')
     return computeTimeSlotsForDate(selDate, mealType, settingsDailyHours, settingsDateOverrides, settingsTimeRanges)
   }, [visibleCourses, selCourse, settingsTimeRanges, settingsDailyHours, settingsDateOverrides, selDate, isSimpleMode])
 
   // 変更対象の予約のコース名から提供時間帯（ランチ/ディナー/両方）を引き、新しい日付での選択可能スロットを算出
+  // （フォールバックを'both'にする理由は上のcourseTimeSlotsと同じ、第49回レビュー）
   const chgTimeSlots = useMemo(() => {
     const matched = settingsCourses.find(c => c.name === changingRes?.course)
-    const mealType = matched?.mealType || 'dinner'
+    const mealType = matched?.mealType || 'both'
     return computeTimeSlotsForDate(chgDate, mealType, settingsDailyHours, settingsDateOverrides, settingsTimeRanges)
   }, [settingsCourses, changingRes, chgDate, settingsDailyHours, settingsDateOverrides, settingsTimeRanges])
   // 変更対象の予約のコースの所要時間（コースごとに滞在時間が異なる店舗向け。見つからなければ既定値にフォールバック）
