@@ -1159,20 +1159,35 @@ export default function Home() {
       setMyResLoading(true)
       setCancelId(null)
       setScreen('myres')
-      api.getMyReservations(userId, undefined, undefined, authIdToken).then(r => {
-        if (r.success) { setMyRes(r.list || []) } else {
-          // 以前は失敗時にもmyRes([])だけで済ませていたため、本人確認に失敗しただけなのに
-          // 「現在、確定しているご予約はございません。」という偽の空表示に行き着いていた
-          // （実際には予約があるのに、無いと誤解させてしまう）。openMyRes()の通常経路と同様、
-          // エラーを表示し、お名前・電話番号での確認への導線（myResErr表示に付随するボタン）へ
-          // 進めるようにする（Appleデザインチーム視点レビュー・ラウンド51での指摘）。
+      // LINE_CHANNEL_ID未設定の店舗ではlineUserIdの一致だけでは本人確認が完了しない場合があり
+      // （isRealLineUserId_・ラウンド51のコメント参照）、電話番号＋お名前を二要素目のフォールバックとして
+      // 一緒に送る必要がある（openMyRes()側は同じ理由でラウンド51で既に対応済み）。ただしこのgoMyRes
+      // 深リンクは通知の「マイ予約はこちら」から直接開かれ、通常の入力画面を経由しないため、
+      // phone/name state（initLiff内のgetCustomerProfile自動入力を含む）がまだ空のことがほとんどで、
+      // openMyRes()と同じくstateをそのまま送るだけでは不十分（initLiffは画面遷移をブロックしないため
+      // 非同期のgetCustomerProfileの応答を待たずにこのproceedAfterAuthを呼んでいる）。ここで改めて
+      // 既登録のお名前・電話番号を取得してから使う。
+      api.getCustomerProfile(userId, authIdToken).then((cp) => {
+        const knownPhone = (cp && cp.found && cp.phone) ? String(cp.phone) : ''
+        const knownName = (cp && cp.found && cp.name) ? String(cp.name) : ''
+        if (knownName) setName((prev) => prev ? prev : knownName)
+        if (knownPhone) setPhone((prev) => prev ? prev : knownPhone)
+        return api.getMyReservations(userId, knownPhone, knownName, authIdToken)
+      }).catch(() => api.getMyReservations(userId, undefined, undefined, authIdToken))
+        .then(r => {
+          if (r.success) { setMyRes(r.list || []) } else {
+            // 以前は失敗時にもmyRes([])だけで済ませていたため、本人確認に失敗しただけなのに
+            // 「現在、確定しているご予約はございません。」という偽の空表示に行き着いていた
+            // （実際には予約があるのに、無いと誤解させてしまう）。openMyRes()の通常経路と同様、
+            // エラーを表示し、お名前・電話番号での確認への導線（myResErr表示に付随するボタン）へ
+            // 進めるようにする（Appleデザインチーム視点レビュー・ラウンド51での指摘）。
+            setMyRes([])
+            setMyResErr(friendlyServerError(r, t('予約の読み込みに失敗しました。もう一度お試しください。'), t))
+          }
+        }).catch(() => {
           setMyRes([])
-          setMyResErr(friendlyServerError(r, t('予約の読み込みに失敗しました。もう一度お試しください。'), t))
-        }
-      }).catch(() => {
-        setMyRes([])
-        setMyResErr(t('通信エラーが発生しました。もう一度お試しください。'))
-      }).finally(() => setMyResLoading(false))
+          setMyResErr(t('通信エラーが発生しました。もう一度お試しください。'))
+        }).finally(() => setMyResLoading(false))
     } else if (restoreChangeDraftIfAny(userId, isGuest, authIdToken)) {
       // 変更フローの下書きが残っていれば優先して復元する（新規予約の下書きと変更の下書きが
       // 同時に残っているのは通常あり得ないが、万一両方残っていても、より最近まで操作していた
@@ -3187,7 +3202,26 @@ export default function Home() {
               </div>
             </div>
           ) : myRes.length === 0 ? (
-            <div className="no-res">{t('現在、確定しているご予約はございません。')}</div>
+            <div className="no-res">
+              {t('現在、確定しているご予約はございません。')}
+              {/* LINE_CHANNEL_ID未設定の店舗ではlineUserIdの一致だけでは本人確認が完了せず（ラウンド51の
+                  isRealLineUserId_の対策参照）、getMyReservationsはこの場合サーバーエラーではなく
+                  「一致0件」という成功応答を返す（本人確認失敗と「本当に予約が無い」は区別できない）。
+                  そのためこの空リスト表示は、実際には予約があるのに見つからないだけの偽の「予約なし」
+                  でありうる。上のmyResErr分岐（本人確認自体が明示的に失敗した場合）には既にお名前・
+                  電話番号での確認ボタンが用意されている（Appleデザインチーム視点レビュー・ラウンド51）が、
+                  この「成功はしたが0件」の分岐にだけ同じ導線が抜けており、お客様が「予約が消えた」と
+                  誤解して問い合わせに至りかねない（ランダム客層視点レビュー・ラウンド51での指摘）。
+                  ゲスト利用時は既にお名前・電話番号で検索した結果のため対象外（isGuestMode）。 */}
+              {!isGuestMode && (
+                <div style={{ marginTop: 14 }}>
+                  <p className="hint" style={{ marginBottom: 8 }}>{t('見つからない場合は、ご予約時のお名前・電話番号でも確認できます')}</p>
+                  <button className="btn-s" onClick={() => { setMyResErr(''); setMyResNeedsPhone(true) }}>
+                    {t('📞　お名前・電話番号で確認する')}
+                  </button>
+                </div>
+              )}
+            </div>
           ) : (
             myRes.map((res) => (
               <div key={res.id} className="res-card">
@@ -3466,9 +3500,13 @@ export default function Home() {
                       // 案内済みだった結果として画面上「決着済み」になったケース。「✕ 取り消しました」
                       // （＝自分が取り消した）と同じ文言にすると事実と異なるため、区別した文言にする
                       // （execWaitlistCancel内のalreadyGone分岐、Meta CEO視点レビュー・ラウンド48）。
-                      <div role="status" style={{ marginTop: 8, color: 'var(--sub)', fontSize: 13, fontWeight: 'bold' }}>{t('この登録は既に終了しています（空きのご案内が済んでいるか、既に取り消し済みです）')}</div>
+                      // この2つだけこのファイルの他のrole="status"（2251/2275/2284/3491行目付近）と
+                      // 違いaria-live="polite"の明示指定が無かった。role="status"の暗黙値はpoliteの
+                      // ため実害は無いが、他の全箇所と表記が揃っていなかった（Appleデザインチーム視点
+                      // レビュー・ラウンド51でのクロスページ一貫性監査）。明示指定に揃える。
+                      <div role="status" aria-live="polite" style={{ marginTop: 8, color: 'var(--sub)', fontSize: 13, fontWeight: 'bold' }}>{t('この登録は既に終了しています（空きのご案内が済んでいるか、既に取り消し済みです）')}</div>
                     ) : (
-                      <div role="status" style={{ marginTop: 8, color: 'var(--red)', fontSize: 13, fontWeight: 'bold' }}>{t('✕ 取り消しました')}</div>
+                      <div role="status" aria-live="polite" style={{ marginTop: 8, color: 'var(--red)', fontSize: 13, fontWeight: 'bold' }}>{t('✕ 取り消しました')}</div>
                     )
                   ) : (
                   <div className="res-actions">

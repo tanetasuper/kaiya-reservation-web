@@ -400,9 +400,18 @@ export default function Setup() {
              別ファイルの独立したグローバルスタイルのため、admin.js側の修正は自動的には適用されて
              いなかった。Appleデザインチーム視点レビュー・ラウンド50での指摘）。admin.js側で検証済みの
              値をベースに、--bg-subtle(#fafafa)側でも4.5:1を満たすよう--text-faintのみ僅かに
-             濃くして採用する（明暗の相対関係＝faintの方がmutedより淡い、は維持）。 */
+             濃くして採用する（明暗の相対関係＝faintの方がmutedより淡い、は維持）。
+             ラウンド50時点の#737373は--bg-subtle(#fafafa)に対しては約4.54:1で通っていたが、
+             このページの本体背景である--bg-page(#f5f5f5)（141行目付近、ステップ進捗表示
+             「n/合計」がカードの外＝ここに直接乗る）に対しては未確認のままで、実測すると
+             約4.35:1しか無くWCAG AA未達だった（bg-subtleだけ検証しbg-pageは見ていなかった。
+             admin.js側も同じ観点で見直した結果、そちらの#767676も対--bg-page約4.17:1で
+             同様に未達と判明。Appleデザインチーム視点レビュー・ラウンド51でのクロスページ
+             一貫性監査）。最も暗い--bg-pageに対しても4.5:1を超える値まで底上げし、
+             admin.js側と同じ#6d6d6dへ統一する（対白4.75:1・対--bg-page 4.75:1・
+             対--bg-subtle 4.96:1）。 */
           --text-muted: #666666;
-          --text-faint: #737373;
+          --text-faint: #6d6d6d;
           --shadow-sm: rgba(0,0,0,.08);
           --danger-bg: #ffebee;
           --danger-border: #ffcccc;
