@@ -310,8 +310,15 @@ function AdBannerSlot({ adBanner, place, style, lang }) {
   )
 }
 
-function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected, onSelect, onPrev, onNext, loading, lang }) {
+function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected, onSelect, onPrev, onNext, loading, lang, countUnit }) {
   const t = makeT(lang)
+  // Home側のcapacityTextと同じ理由・同じ置き換えルール（countUnit==='台'の店舗だけ「満席」→「満車」）。
+  // このカレンダーは独立した関数コンポーネントのため、Home側のfullWordをそのまま参照できず、
+  // 同じロジックをここでも算出する（呼び出し側からcountUnitをpropsで渡してもらう）。
+  const calFullWord = countUnit === '台' ? '満車' : '満席'
+  function calText(jaTemplate) {
+    return lang === 'en' ? t(jaTemplate) : jaTemplate.replace(/満席/g, calFullWord)
+  }
   const todayYMD = toYMD(new Date())
   const firstDay = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month+1, 0).getDate()
@@ -335,7 +342,7 @@ function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected,
   // 過去日・範囲外の未来日は理由を分けたラベルにする。
   function mark(cell) {
     const { info, isPast, isFuture, isUnavailable } = cell
-    if (isUnavailable) return { text:'✕', color:'var(--hint)', label:t('満席・休業') }
+    if (isUnavailable) return { text:'✕', color:'var(--hint)', label:calText('満席・休業') }
     if (isPast) return { text:'', color:'var(--hint)', label:t('過去の日付のため選択できません') }
     if (isFuture) return { text:'', color:'var(--hint)', label:t('予約可能な期間外です') }
     if (info.status === 'few')  return { text:'△', color:'var(--kwarn-title)', label:t('残席わずか') }
@@ -399,7 +406,7 @@ function CustomerCalendar({ year, month, monthAvail, dateMin, dateMax, selected,
         {/* 以前は凡例だけvar(--red)（赤）だったが、実際のマーク（mark()関数）はvar(--hint)（グレー）で
             描画しており、凡例と実際の色が食い違っていた（審判団バックログ一括レビューでの指摘）。
             実際のマーク色に合わせる。 */}
-        <span style={{ color:'var(--hint)', fontWeight:'bold' }}>✕ {t('満席/休業')}</span>
+        <span style={{ color:'var(--hint)', fontWeight:'bold' }}>✕ {calText('満席/休業')}</span>
       </div>
     </div>
   )
@@ -737,6 +744,17 @@ export default function Home() {
   // そもそも"visit"という語を含まないため、visitNounEnの出番は無い）。
   function visitText(jaTemplate) {
     return lang === 'en' ? t(jaTemplate) : jaTemplate.replace(/来店/g, visitNoun)
+  }
+  // 「満席」は「席」を前提にした言葉のため、countUnitが「台」（レンタカー・レンタサイクル・
+  // 「リフト」に呼び方を変えた整備工場等、資産・車両を数える業態）の店舗にそのまま出すと、
+  // 実際には席が1つも無い業態に「席」という言葉だけが残ってしまう（ラウンド52・業種経営者陣視点
+  // レビューでの指摘）。日本語には「満車」という、まさにこの場面向けの既存の言い回しがあるため、
+  // countUnit==='台'の店舗だけ実行時に置き換える。perStaff系（美容院・クリニック・面接等、
+  // countUnit既定「名」のまま運用する業態）は「満席」でも実務上意味が通じるため、判断が割れる
+  // 主観的な言い換えを強制せず、従来通りとする（英語版は元々"Full"で席を連想させないため無変更）。
+  const fullWord = countUnit === '台' ? '満車' : '満席'
+  function capacityText(jaTemplate) {
+    return lang === 'en' ? t(jaTemplate) : jaTemplate.replace(/満席/g, fullWord)
   }
   // 見積内訳（部品代・工賃）のラベルも同じ問題を抱えていた（業種経営者陣視点レビュー・ラウンド49で
   // 指摘、ラウンド50で設定化）。t()の辞書は固定の日本語キー'部品代'/'工賃'にしか対応していないため、
@@ -2408,6 +2426,7 @@ export default function Home() {
                 onPrev={() => { if (calMonth === 0) { setCalYear(y=>y-1); setCalMonth(11) } else setCalMonth(m=>m-1) }}
                 onNext={() => { if (calMonth === 11) { setCalYear(y=>y+1); setCalMonth(0) } else setCalMonth(m=>m+1) }}
                 loading={monthAvailLoading}
+                countUnit={countUnit}
                 lang={lang}
               />
               {selDate && <p className="deadline-note" style={{ marginTop:10 }}>⏳ {deadlineLabel(selDate)}</p>}
@@ -2419,7 +2438,12 @@ export default function Home() {
             <div className="card" id="card-time">
               <h2 className="card-lbl">
                 {visitText('⏰　来店時間')}
-                {!selTime && availLoading && <span className="avail-loading"> {t('確認中...')}</span>}
+                {/* 「確認中...」の出現自体は見た目のみのサイレント更新で、フォーカスが既にカレンダー／
+                    コース選択にあるスクリーンリーダー利用者には気づかれなかった（人数カードの同種の
+                    重複表示とは異なりここは単独表示のため、そのままrole="status"化しても二重読み上げは
+                    発生しない。ラウンド52・Appleデザインチーム視点レビューでのスクリーンリーダー
+                    読み上げシミュレーションでの指摘）。 */}
+                {!selTime && availLoading && <span className="avail-loading" role="status" aria-live="polite"> {t('確認中...')}</span>}
               </h2>
               <div className="card-body">
                 {selDate && courseTimeSlots.length === 0 ? (
@@ -2445,9 +2469,18 @@ export default function Home() {
             <div className="card" id="card-guest">
               <h2 className="card-lbl">
                 {t('👥　人数')}
-                {availLoading && <span className="avail-loading"> {t('確認中...')}</span>}
+                {/* この直後（h2の外、card-body側）に同じavailLoadingで出るオーバーレイ（より詳しい
+                    文言「空き状況を確認中...」／staffCheckingText()）と見た目上の重複表示だった。
+                    両方をそのままrole="status"化すると同じ状態変化で2回連続読み上げられてしまうため
+                    （ラウンド52・Appleデザインチーム視点レビューでのスクリーンリーダー読み上げ
+                    シミュレーションでの指摘：「重複する見た目はどちらか片方だけに読ませる」という
+                    このファイル内で既に確立されたルール——満席マス凡例の色統一、setup.jsの進捗バー
+                    aria-hidden等——と同じ考え方）、こちらは読み上げ対象から外し、より説明的な
+                    オーバーレイ側だけをライブリージョンにする。人数選択後に確定する「残りN席」の
+                    結果自体（avail-infoの方）はここにしか出現しないため、そちらは引き続きここで読ませる。 */}
+                {availLoading && <span className="avail-loading" aria-hidden="true"> {t('確認中...')}</span>}
                 {avail && !availLoading && !isKasshiki && (
-                  <span className="avail-info">
+                  <span className="avail-info" role="status" aria-live="polite">
                     {lang === 'en'
                       ? (capacityModel === 'perStaff' ? ` ${avail.remainingSeats} ${staffLabel} available` : ` ${avail.remainingSeats} ${countUnit} remaining`)
                       : (capacityModel === 'perStaff' ? ` 対応可能な${staffLabel} ${avail.remainingSeats}${countUnit}` : ` 残り ${avail.remainingSeats}${countUnit}`)}
@@ -2457,7 +2490,7 @@ export default function Home() {
               <div className="card-body" style={{ position: 'relative' }}>
                 {availLoading && (
                   <div style={{ position:'absolute', inset:0, background:'var(--overlay-bg)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:12, zIndex:1 }}>
-                    <span style={{ fontSize:13, color:'var(--hint)' }}>{capacityModel === 'perStaff' ? staffCheckingText() : t('空き状況を確認中...')}</span>
+                    <span role="status" aria-live="polite" style={{ fontSize:13, color:'var(--hint)' }}>{capacityModel === 'perStaff' ? staffCheckingText() : t('空き状況を確認中...')}</span>
                   </div>
                 )}
                 {/* このファイル内のバリデーションエラー（availErr以下、wlErr/inputErr/myResErr/
@@ -2515,7 +2548,7 @@ export default function Home() {
                         <span className="g-btn-main">{lang === 'en'
                           ? (guestUnit === '名' ? `${n} guest${n === 1 ? '' : 's'}` : `${n} ${guestUnit}`)
                           : `${n}${guestUnit}`}</span>
-                        {isOccupied && <span className="g-btn-sub">{n === 1 ? t('条件あり') : t('満席')}</span>}
+                        {isOccupied && <span className="g-btn-sub">{n === 1 ? t('条件あり') : capacityText('満席')}</span>}
                       </button>
                     )
                   })}
@@ -2528,7 +2561,7 @@ export default function Home() {
                       <div style={{ color:'var(--green)', fontWeight:'bold' }}>✅ {t('キャンセル待ちに登録しました。空きが出たらお知らせします。')}</div>
                     ) : (
                       <>
-                        <div style={{ marginBottom:8 }}>{t('この日は満席です。キャンセルが出た際にお知らせすることができます（先着順のためご案内をお約束するものではありません）。')}</div>
+                        <div style={{ marginBottom:8 }}>{capacityText('この日は満席です。キャンセルが出た際にお知らせすることができます（先着順のためご案内をお約束するものではありません）。')}</div>
                         <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
                           <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')} aria-label={t('お名前')}
                             style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--input-bg)', color:'var(--text)' }} />
@@ -3030,7 +3063,7 @@ export default function Home() {
                       戻ってしまっていた（他の全箇所は同じ理由でvisitText()を使っている。1728・1752・
                       2213行目付近参照）。業種経営者陣視点レビュー・第43回での指摘。 */}
                   <div style={{ fontSize: 11, color: 'var(--hint)', marginTop: 6 }}>
-                    {visitText('選択した来店日を1回目として、以降を自動で申し込みます。満席等で確定できない回があった場合は、その回だけ個別にご連絡します。')}
+                    {capacityText(visitText('選択した来店日を1回目として、以降を自動で申し込みます。満席等で確定できない回があった場合は、その回だけ個別にご連絡します。'))}
                   </div>
                 </div>
               )}
@@ -3283,8 +3316,31 @@ export default function Home() {
                       const seriesTotal = seriesMembers.length
                       return lang === 'en' ? `Recurring booking (${seriesIdx} of ${seriesTotal})` : `定期予約（${seriesIdx}/${seriesTotal}回目）`
                     })()}
+                    {/* 「2/4回目」のようなスラッシュ表記は、一見すると日付（2月4日）とも読めてしまい、
+                        何回目・全何回かを表す表記だと初見では伝わらない可能性がある（お客様パネル視点
+                        レビュー・ラウンド52での指摘：定期予約の表記は43〜51の複数ラウンドで文言修正・
+                        横展開が繰り返されてきたが、この記法自体の意味を説明する箇所がLINE・メール通知・
+                        このマイ予約画面のどこにも一度も無かった）。シリーズの最初の表示回だけ、実際の
+                        回数を使ったフルセンテンスの説明を1回だけ添える（毎回のカードに出すと同じ説明が
+                        繰り返され煩わしいため、最初の1件だけで足りる）。 */}
+                    {myRes.findIndex(x => x.seriesId === res.seriesId) === myRes.indexOf(res) && (() => {
+                      const seriesMembers = myRes.filter(x => x.seriesId === res.seriesId)
+                      const seriesIdx = seriesMembers.findIndex(x => x.id === res.id) + 1
+                      const seriesTotal = seriesMembers.length
+                      return (
+                        <div style={{ marginTop: 2, fontSize: 11 }}>
+                          {lang === 'en'
+                            ? `"${seriesIdx} of ${seriesTotal}" means this is booking ${seriesIdx} out of ${seriesTotal} in this recurring series.`
+                            : `「${seriesIdx}/${seriesTotal}回目」は、全${seriesTotal}回の定期予約のうち${seriesIdx}回目のご予約という意味です。`}
+                        </div>
+                      )
+                    })()}
                     {myRes.findIndex(x => x.seriesId === res.seriesId) === myRes.indexOf(res) && res.status !== 'キャンセル' && (
-                      <button className="btn-s" style={{ marginLeft: 8, padding: '4px 10px', fontSize: 12 }}
+                      // 見積承諾/辞退ボタン（このすぐ下のブロック）と同じ理由でmin-height:44pxを補う
+                      // （お客様パネル視点レビュー・ラウンド52での指摘：padding4px・fontSize12だと実測
+                      // 22px前後しかなく、シリーズ全体を一括キャンセルする取り返しのつきにくい操作の
+                      // ボタンとしては特にタップミスのリスクが大きい）。
+                      <button className="btn-s" style={{ marginLeft: 8, padding: '4px 10px', fontSize: 12, minHeight: 44, boxSizing: 'border-box' }}
                         disabled={seriesCancelingId === res.seriesId} onClick={() => { setSeriesCancelConfirmId(res.seriesId); setSeriesCancelErr('') }}>
                         {seriesCancelingId === res.seriesId ? t('処理中...') : t('このシリーズをまとめてキャンセル')}
                       </button>
@@ -3332,10 +3388,17 @@ export default function Home() {
                         フルウォークスルーで発覚）。他の日時ラベルと同じくvisitText()経由にする。 */}
                     <div style={{ fontSize: 11, color: 'var(--hint)', marginBottom: 8 }}>{visitText('※ 承諾・辞退いずれの場合も、ご来店予約自体はキャンセルになりません。')}</div>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn-p" style={{ padding: '9px 14px', fontSize: 13 }} disabled={estimateRespondingId === res.id} onClick={() => setEstimateConfirm({ id: res.id, accept: true })}>
+                      {/* 承諾・辞退は正反対の結果になる隣り合ったボタンのため、他の全ての対（変更/取消、
+                          はい/いいえ等が使う.btn-chg/.btn-cnl/.cnl-yes/.cnl-noは全てmin-height:44pxを
+                          持つ）と違い、ここだけ.btn-p/.btn-sの余白を9px 14pxへ縮めた結果min-heightの
+                          指定が無いままタップ領域が44px未満（実測約34px）に縮んでいた（お客様パネル視点
+                          レビュー・ラウンド52での指摘：古い端末・不慣れな指先での誤タップは、承諾のつもり
+                          で辞退を押してしまう、あるいはその逆という取り返しのつきにくい誤操作に直結する）。
+                          見た目のコンパクトさは変えず、タップ領域だけ44pxを下回らないようにする。 */}
+                      <button className="btn-p" style={{ padding: '9px 14px', fontSize: 13, minHeight: 44, boxSizing: 'border-box' }} disabled={estimateRespondingId === res.id} onClick={() => setEstimateConfirm({ id: res.id, accept: true })}>
                         {estimateRespondingId === res.id ? t('送信中...') : t('承諾する')}
                       </button>
-                      <button className="btn-s" style={{ padding: '9px 14px', fontSize: 13 }} disabled={estimateRespondingId === res.id} onClick={() => setEstimateConfirm({ id: res.id, accept: false })}>
+                      <button className="btn-s" style={{ padding: '9px 14px', fontSize: 13, minHeight: 44, boxSizing: 'border-box' }} disabled={estimateRespondingId === res.id} onClick={() => setEstimateConfirm({ id: res.id, accept: false })}>
                         {t('辞退する')}
                       </button>
                     </div>
@@ -3428,10 +3491,11 @@ export default function Home() {
                           <div style={{ fontSize:11, color:'var(--warning-text)', marginTop:4 }}>{t('上記の同意チェックが必要です')}</div>
                         )}
                         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                          <button className="btn-p" style={{ padding: '9px 14px', fontSize: 13 }} disabled={lateReqSubmitting || !privacyConsent} onClick={() => submitLateRequest(res)}>
+                          {/* 見積承諾/辞退ボタンと同じ理由（このすぐ上のコメント参照）でmin-height:44pxを補う。 */}
+                          <button className="btn-p" style={{ padding: '9px 14px', fontSize: 13, minHeight: 44, boxSizing: 'border-box' }} disabled={lateReqSubmitting || !privacyConsent} onClick={() => submitLateRequest(res)}>
                             {lateReqSubmitting ? t('送信中...') : t('依頼を送信する')}
                           </button>
-                          <button className="btn-s" style={{ padding: '9px 14px', fontSize: 13 }} onClick={() => { setLateReqId(null); setLateReqErr('') }}>{t('やめる')}</button>
+                          <button className="btn-s" style={{ padding: '9px 14px', fontSize: 13, minHeight: 44, boxSizing: 'border-box' }} onClick={() => { setLateReqId(null); setLateReqErr('') }}>{t('やめる')}</button>
                         </div>
                       </div>
                     ) : (
@@ -3485,7 +3549,7 @@ export default function Home() {
                   何も残っておらず、この一覧だけを見ても意味が伝わらなかった（ランダム客層視点
                   レビュー・ラウンド47での指摘）。 */}
               <p style={{ fontSize: 12, color: 'var(--sub)', marginTop: 0, marginBottom: 8, lineHeight: 1.6 }}>
-                {t('満席のためキャンセル待ちにご登録いただいた内容です。空きが出た場合はご登録の連絡先へお知らせします（先着順のため必ずご案内できるとは限りません）。')}
+                {capacityText('満席のためキャンセル待ちにご登録いただいた内容です。空きが出た場合はご登録の連絡先へお知らせします（先着順のため必ずご案内できるとは限りません）。')}
               </p>
               {myWaitlist.map((wl) => (
                 <div key={wl.id} className="res-card">
@@ -3575,6 +3639,7 @@ export default function Home() {
                 onPrev={() => { if (calMonth === 0) { setCalYear(y=>y-1); setCalMonth(11) } else setCalMonth(m=>m-1) }}
                 onNext={() => { if (calMonth === 11) { setCalYear(y=>y+1); setCalMonth(0) } else setCalMonth(m=>m+1) }}
                 loading={monthAvailLoading}
+                countUnit={countUnit}
                 lang={lang}
               />
             </div>
@@ -3657,7 +3722,7 @@ export default function Home() {
                             既にこの分岐があるが、変更フローのボタンだけ漏れていた（ランダム客層視点
                             レビューでの指摘：常連客が1名に変更しようとして「満席」と表示され、実際には
                             空いているのに諭められてしまう）。 */}
-                        {disabled && <span className="g-btn-sub">{n === 1 ? t('条件あり') : t('満席')}</span>}
+                        {disabled && <span className="g-btn-sub">{n === 1 ? t('条件あり') : capacityText('満席')}</span>}
                       </button>
                     )
                   })}
@@ -3675,7 +3740,7 @@ export default function Home() {
                       <div style={{ color:'var(--green)', fontWeight:'bold' }}>✅ {t('キャンセル待ちに登録しました。空きが出たらお知らせします。')}</div>
                     ) : (
                       <>
-                        <div style={{ marginBottom:8 }}>{t('この日は満席です。キャンセルが出た際にお知らせすることができます（先着順のためご案内をお約束するものではありません）。')}</div>
+                        <div style={{ marginBottom:8 }}>{capacityText('この日は満席です。キャンセルが出た際にお知らせすることができます（先着順のためご案内をお約束するものではありません）。')}</div>
                         <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
                           <input value={name} onChange={e => setName(e.target.value)} placeholder={t('お名前')} aria-label={t('お名前')}
                             style={{ flex:'1 1 140px', minHeight:44, boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13, background:'var(--input-bg)', color:'var(--text)' }} />
