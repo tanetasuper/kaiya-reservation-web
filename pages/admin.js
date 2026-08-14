@@ -1969,7 +1969,22 @@ export default function Admin() {
     try {
       const r = await api.adminRemoveWaitlist(id)
       if (r.success) { showToast('削除しました'); loadWaitlist() }
-      else showToast(friendlyServerError(r, '削除に失敗しました'), 'error')
+      else {
+        // ラウンド46でお客様自身によるキャンセル待ち取り消し（cancelMyWaitlistEntry）を追加したことで、
+        // スタッフがこの一覧を開いたまま裏でお客様が同じ行を消す、という新しい経路が生まれた。
+        // この一覧は開いたときと「更新」ボタン押下時にしか再取得しない（自動ポーリング無し）ため、
+        // スタッフには通知が来ず、既に消えている行が画面上には残ったまま見える。その状態で「削除」を
+        // 押すと、サーバーは対象行を見つけられず'見つかりません'を返すが、従来はこのエラー分岐で
+        // 一覧を再取得しておらず、失敗トーストが出るだけで画面上の行は消えないまま＝スタッフが
+        // 同じボタンを繰り返し押しかねなかった（Meta CEO視点レビュー・ラウンド47での指摘）。
+        // 失敗時も一覧を再取得して画面をサーバーの実態に同期させ、「既に取り消し済み」であることが
+        // 分かるようにする。
+        const alreadyGone = r && r.error === '見つかりません'
+        showToast(alreadyGone
+          ? 'このお客様は既にキャンセル待ちを取り消しています（一覧を更新しました）'
+          : friendlyServerError(r, '削除に失敗しました'), 'error')
+        loadWaitlist()
+      }
     } catch { showToast('通信エラーが発生しました', 'error') }
   }
 
@@ -3445,7 +3460,7 @@ export default function Admin() {
                         style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
                     </div>
                     <div>
-                      <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>キャッチコピー・業態（画面上部に表示）</label>
+                      <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>キャッチコピー・業種（画面上部に表示）</label>
                       <input value={settings.restaurantTagline} onChange={e => setSettings(s => ({ ...s, restaurantTagline: e.target.value }))}
                         style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
                     </div>
@@ -3517,7 +3532,7 @@ export default function Admin() {
                       （ユーザー指摘・2026-08-08）。 */}
                   <div style={{ marginTop:16, paddingTop:14, borderTop:'1px solid var(--border-light)', display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:14 }}>
                     <div>
-                      <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Q1の質問文言（業態に合わせて変更できます。例：「症状・ご相談内容」「作業内容」等）</label>
+                      <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Q1の質問文言（業種に合わせて変更できます。例：「症状・ご相談内容」「作業内容」等）</label>
                       <input value={settings.q1Question} placeholder="ご利用目的（任意）"
                         onChange={e => setSettings(s => ({ ...s, q1Question: e.target.value }))}
                         style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
@@ -3531,7 +3546,7 @@ export default function Admin() {
                   </div>
                   <div style={{ marginTop:14, display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:14 }}>
                     <div>
-                      <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Q1の選択肢（1行に1つ、業態に合わせて変更できます）</label>
+                      <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Q1の選択肢（1行に1つ、業種に合わせて変更できます）</label>
                       {/* お客様画面は「最後の行＝自由記入を開く選択肢」という位置ベースの規約で判定している
                           （文字列「その他」自体をどこかに書き換えても動作は変わらない）。順序を変えると
                           自由記入の位置も変わってしまうため、店舗側に明示しておく（審判団バックログ
@@ -3575,7 +3590,20 @@ export default function Admin() {
                             <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>LIFF ID</label>
                             <input value={connSettings.liffId} onChange={e => setConnSettings(s => ({ ...s, liffId: e.target.value }))}
                               style={{ background:'var(--bg-subtle)', color:'var(--text-primary)', width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid var(--border)', borderRadius:6, fontSize:13 }} />
-                            <div style={{ fontSize:11, color:'var(--text-faint)', marginTop:4 }}>Vercelの環境変数 NEXT_PUBLIC_LIFF_ID は別途設定が必要です（お客様画面のLIFF初期化に使われるため）</div>
+                            {/* この欄の他3項目（カレンダー・グループID・LINEトークン）は保存すると即座に
+                                本番へ反映されるが、LIFF IDだけは例外——お客様画面（pages/index.js）は
+                                ビルド時にバンドルされたVercel環境変数 NEXT_PUBLIC_LIFF_ID の値だけを見ており、
+                                ここで保存したliffIdは参照しない（サーバー側の別用途、例：通知メッセージ内の
+                                LIFFディープリンク生成にのみ使われる）。この欄も同じ入力欄・同じ「接続設定を
+                                保存」ボタン・同じ成功トースト「保存しました」を共有しているため、以前は
+                                text-faintの脚注1行だけでこの例外を説明しており、見落として「保存したのに
+                                お客様画面のLIFFログインが変わらない／新旧IDが食い違う」と誤解されるおそれが
+                                あった（Apple CEO視点レビュー・ラウンド47での指摘）。他の重要な注意書きと
+                                同じwarning配色の目立つ箱に格上げし、「保存＝反映」ではないことを保存前に
+                                誤解しないよう明示する。 */}
+                            <div style={{ marginTop:6, background:'var(--warning-bg)', border:'1px solid var(--warning-border)', borderRadius:6, padding:'6px 10px', fontSize:11, color:'var(--warning-text)' }}>
+                              ⚠️ ここを保存しても、お客様画面のLIFFログインの動作は変わりません。実際に使われるのはVercel側の環境変数 NEXT_PUBLIC_LIFF_ID の値のため、お客様画面のLIFF IDを変更する場合は開発担当者にVercel側の設定変更も依頼してください（この欄はサーバー側の別の用途のみに使われます）。
+                            </div>
                           </div>
                           <div>
                             <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>スタッフ通知用LINEグループID（グループA）</label>
@@ -3608,10 +3636,15 @@ export default function Admin() {
                   </div>
                 )}
 
-                {/* 業態設定：コースの有無・呼び方、担当者指名の可否を切り替える（うなぎ屋・定食屋等、コース料理をやらない業態にも対応） */}
+                {/* 業種設定：コースの有無・呼び方、担当者指名の可否を切り替える（うなぎ屋・定食屋等、コース料理をやらない業種にも対応）。
+                    見出し・説明文は、上の「業種プリセット」カード（第43回で「業種」に統一済み）とタブ内で
+                    隣接して視界に入るため、この見出しだけ「業態」のままだと同じタブの中で語が切り替わって
+                    見える（テスト全部隊・業種経営者陣視点レビュー・第47回での指摘）。プロジェクト全体の
+                    「業種」「業態」統一は引き続き別途の判断が必要な規模のため、この見出し・説明文という
+                    高視認性の箇所のみ「業種」に揃える（範囲を絞った対応）。 */}
                 <div style={{ background:'var(--bg-card)', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px var(--shadow-sm)' }}>
-                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>業態設定</h2>
-                  <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>コース料理をやらない業態（うなぎ屋・定食屋・中華料理店など）や、担当者を指名できる業態向けの設定です。</div>
+                  <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>業種設定</h2>
+                  <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>コース料理をやらない業種（うなぎ屋・定食屋・中華料理店など）や、担当者を指名できる業種向けの設定です。</div>
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:14 }}>
                     <div>
                       <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>コース選択の有無</label>

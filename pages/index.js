@@ -427,6 +427,24 @@ export default function Home() {
   // 「復元待ちのコース名」をここに一時的に保持する（visibleCoursesが確定し次第、下のuseEffectで
   // 名前が一致するインデックスへ解決する）。
   const [pendingCourseName, setPendingCourseName] = useState('')
+  // applySettingsResponse（1回のページ表示で最大2回呼ばれる設定読み込み、1159行目付近）専用。
+  // 「今まさに画面に表示されている選択中コースの名前」を常に追跡しておくための参照。selCourseは
+  // 上のコメントの通り配列の位置に過ぎないため、2回目の読み込みが届いた時にprevインデックスを
+  // そのまま新しいvisibleCoursesの件数とだけ突き合わせても、①途中のコースが1件廃止されて件数が
+  // 減っただけで、選択中だったコースがまだ存在するのに無関係な理由で0番目へ強制的に巻き戻される
+  // （過剰反応）、②逆に選択中だったコース自体が廃止されても、廃止によって配列の並びが詰まった結果
+  // 新しい件数の範囲内にたまたま収まってしまい、無言のまま別のコースへすり替わる（本来の不具合が
+  // 形を変えて再発）——という2通りの誤りをどちらも起こしうる（Apple視点レビュー・ラウンド47での
+  // 指摘：件数比較というインデックスベースの判定では「同じコースかどうか」自体を見ていない）。
+  // pendingCourseNameと同じく名前という安定した識別子で解決するため、選択が変わるたび（下の
+  // useEffectで）ここへ書き留めておく。
+  const selectedCourseNameRef = useRef('')
+  // 上のselectedCourseNameRefで「本当に選択中のコースが廃止・改名された」と判定できた場合に、
+  // お客様へ一言伝えるための状態（ランダム客層視点レビュー・ラウンド47での指摘：ラウンド46/47の
+  // 修正でindexの巻き戻り誤検知自体は直ったが、巻き戻りが実際に起きた場合の案内が無く、選んだはずの
+  // コースが無言で先頭コースへ差し替わってしまうこと自体には気づけないままだった）。エラーではなく
+  // 「無言のまま進めさせない」ための注意喚起なので、下のuseEffectで消えるinputErrとは別に持つ。
+  const [courseUnavailableNotice, setCourseUnavailableNotice] = useState(false)
   // ランチ終了時刻の既定値をdailyHours方式（'13:00'、サーバー側defaultDailyHours()）と統一
   // （Microsoft CEO視点レビュー・ラウンド38での指摘、admin.jsのdefTimeRangesと同じ修正）。
   // labelは現状このファイル内では表示に使われていない（type/start/endのみ参照）が、admin.js側の
@@ -615,6 +633,12 @@ export default function Home() {
   const [wlCancelingId, setWlCancelingId] = useState(null)
   const [wlCancelConfirmId, setWlCancelConfirmId] = useState(null)
   const [wlCancelErr, setWlCancelErr] = useState('')
+  // キャンセル待ち登録の取り消し確認だけ、上のcnlYesRefs（通常キャンセル・シリーズ一括キャンセル・
+  // 見積承諾/辞退の3種）に既にある「はい」ボタンへのフォーカス移動が欠けていた（Appleデザイン
+  // チーム視点レビュー・審判団ラウンド47での指摘：ラウンド46で新設された画面のため見た目は既存の
+  // cnl-confirmパターンを流用していたが、フォーカス管理だけ後から追加された仕組みに追随できて
+  // いなかった）。同じ仕組みに揃える。
+  useEffect(() => { if (wlCancelConfirmId != null) cnlYesRefs.current[`wl-cancel-${wlCancelConfirmId}`]?.focus() }, [wlCancelConfirmId])
   const [lateReqId, setLateReqId] = useState(null)
   const [lateReqType, setLateReqType] = useState('change')
   const [lateReqMsg, setLateReqMsg] = useState('')
@@ -1166,12 +1190,36 @@ export default function Home() {
       // コースが復元された直後）に②が遅れて届くと、選んだコースが無言で先頭へ巻き戻り、そのまま
       // 送信（createReservation、1511行目付近）されるコースがすり替わってしまっていた（Google CEO
       // 視点レビュー・ラウンド46での指摘：GAS側のコールドスタートで②が数秒〜十数秒遅れることは
-      // gas.js側の28秒タイムアウト設定からも珍しくないと分かる）。現在選ばれているコースが新しい
-      // 一覧（廃止済みを除く）の範囲内でまだ有効なら触らず、範囲外になった場合（件数が減った等）
-      // だけ安全側の0へ寄せる。
+      // gas.js側の28秒タイムアウト設定からも珍しくないと分かる）。
+      // ラウンド46の修正はここで「prevインデックスが新しい件数の範囲内かどうか」という位置ベースの
+      // 判定のみを行っていたが、これだけでは同じ問題を防ぎきれない（Apple視点レビュー・ラウンド47
+      // での指摘）。①途中の無関係なコースが1件廃止されて配列が詰まっただけで、選択中のコース自体は
+      // まだ存在するのに件数比較の結果だけで0番目へ巻き戻される（過剰反応の誤検知）。②逆に選択中の
+      // コースそのものが廃止されても、廃止によって配列が詰まった結果、たまたま新しい件数の範囲内に
+      // 収まってしまい、無言のまま別のコースへすり替わったまま検知されない（ラウンド46で潰したはずの
+      // 不具合の再発）。どちらも「件数」だけを見て「同じコースかどうか（名前）」を見ていないのが
+      // 原因のため、420行目付近のpendingCourseNameと同じ考え方で、位置ではなく名前で解決し直す。
+      // selectedCourseNameRefには「今まさに画面に表示されている選択中コースの名前」を常に追跡させて
+      // あるため、prevインデックス自体には依存しない。名前が新しい一覧に見つかればそのコースが
+      // 廃止・改名されていない証拠なので、並び順が変わっていても正しい新インデックスへ追随させる。
+      // 名前が見つからない場合（本当に廃止・改名された場合、または追跡前の初回読み込みで参照が
+      // まだ空の場合）だけ、従来通りの範囲チェックにフォールバックする。
+      const newVisibleForCourseCheck = r.courses.filter(c => !c.discontinued)
+      const currentCourseName = selectedCourseNameRef.current
+      // 「本当に選択中のコースが廃止・改名された」場合だけここでtrueにする（範囲チェックのみの
+      // フォールバック分岐や、そもそもまだ何も選択追跡していない初回読み込みでは出さない）。
+      if (currentCourseName && newVisibleForCourseCheck.findIndex(c => c.name === currentCourseName) < 0) {
+        setCourseUnavailableNotice(true)
+      }
       setSelCourse(prev => {
-        const visibleCount = r.courses.filter(c => !c.discontinued).length
-        return (prev >= 0 && prev < visibleCount) ? prev : 0
+        const newVisible = newVisibleForCourseCheck
+        const currentName = currentCourseName
+        if (currentName) {
+          const idx = newVisible.findIndex(c => c.name === currentName)
+          if (idx >= 0) return idx
+          return 0 // 選択中だったコースが本当に廃止・改名された場合のみ、安全側の0へ寄せる
+        }
+        return (prev >= 0 && prev < newVisible.length) ? prev : 0
       })
     }
     if (r.timeRanges && r.timeRanges.length > 0) setSettingsTimeRanges(r.timeRanges)
@@ -1217,6 +1265,14 @@ export default function Home() {
     setStaffAssignmentEnabled(!!r.staffAssignmentEnabled)
     if (r.staffRoster) setStaffRoster(r.staffRoster)
   }
+
+  // selectedCourseNameRef（1177行目付近のapplySettingsResponseのコメント参照）を常に最新に保つ。
+  // 選択が変わるたび（お客様が手でタップした時・下書き復元で名前解決された時のいずれも）実行され、
+  // 設定の2回目の読み込みが届いた時点で「実際に選ばれているコースの名前」をいつでも参照できるようにする。
+  useEffect(() => {
+    const c = visibleCourses[selCourse]
+    if (c) selectedCourseNameRef.current = c.name
+  }, [selCourse, visibleCourses])
 
   useEffect(() => {
     const now = new Date()
@@ -1678,13 +1734,19 @@ export default function Home() {
   }
 
   // キャンセル待ち登録の取り消し（マイ予約のexecCancelと同じ「本当に良いか」確認パターン）。
+  // 以前は成功時に一覧から即座にfilterで消していたが、通常予約のキャンセル（execCancel）が
+  // status:'キャンセル'へ書き換えてカードを「✕ キャンセル済み」表示のまま残すのと違い、
+  // ここだけ確認ダイアログごと項目が無言で消えるだけで、実際に取り消せたのか通信が失敗して
+  // 表示が乱れただけなのか見分けがつかなかった（ランダム客層視点レビュー・ラウンド47での指摘：
+  // 回線の弱いお客様ほど「押した→何かが起きた」という結果の手がかりを必要とする）。通常予約と
+  // 同じく成功のしるしを画面に残す（次にマイ予約を開き直すと再取得され、実際に一覧から消える）。
   async function execWaitlistCancel(id) {
     setWlCancelingId(id)
     setWlCancelErr('')
     try {
       const r = await api.cancelMyWaitlistEntry({ id, lineUserId: profile?.userId || '', idToken, phone: myResPhoneUsed, name: myResNameUsed })
       if (r.success) {
-        setMyWaitlist((prev) => prev.filter((x) => x.id !== id))
+        setMyWaitlist((prev) => prev.map((x) => (x.id === id ? { ...x, cancelled: true } : x)))
         setWlCancelConfirmId(null)
       } else {
         setWlCancelErr(r.error || t('取り消しに失敗しました。お手数ですがお電話にてご連絡ください。'))
@@ -2008,6 +2070,20 @@ export default function Home() {
               {t('前回入力いただいた内容を復元しました。内容をご確認のうえ、続きをご入力ください')}
             </div>
           )}
+          {/* 選択していたコースが設定の裏取り更新（applySettingsResponse、1177行目付近）で本当に
+              廃止・改名されたと判明した場合の案内（courseUnavailableNoticeの宣言部コメント参照）。
+              エラーではなく「無言で差し替わった」ことへの注意喚起なのでrole="status"・politeとし、
+              done.pendingApproval等の既存の「注意」バナー（2842行目付近）と同じwarning色にする。 */}
+          {courseUnavailableNotice && (
+            <div role="status" aria-live="polite" style={{ background:'var(--warning-bg)', border:'1px solid var(--warning-border)', borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:'var(--warning-text)' }}>
+              {/* itemLabel（コース／サービス／修理プラン等）は店舗が自由入力する「コンテンツ」で
+                  辞書翻訳の対象外（ファイル冒頭i18n.jsのコメント、h2見出し2090行目付近と同じ扱い）。
+                  visitText関数と同じくlangで文面ごと出し分ける。 */}
+              {lang === 'en'
+                ? `The ${itemLabel} you had selected is no longer available, so your selection was reset. Please choose again.`
+                : `選択していた${itemLabel}は現在ご案内できなくなったため、選択をリセットしました。お手数ですが選び直してください。`}
+            </div>
+          )}
           {isGuestMode && (
             <div style={{ background:'var(--info-bg)', border:'1px solid var(--info-border)', borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:13, color:'var(--info-text)' }}>
               {t('LINEなしでご予約いただけます。ご予約の確認・変更・キャンセルは「マイ予約」から電話番号で検索できます')}{emailCollectionEnabled ? t('（メールアドレスをご登録いただくと確認メールもお送りします）') : ''}{t('。お困りの際はお電話（')}<a href={telHref(bizPhone)} style={{ color:'var(--info-text)', fontWeight:'bold' }}>{bizPhone}</a>{t('）にもご連絡いただけます。')}
@@ -2028,6 +2104,8 @@ export default function Home() {
                   // コースにより提供時間帯（ランチ/ディナー等）が変わるため、選択済みの時間はリセットする（人数はそのまま維持）
                   setSelTime('')
                   setInputErr('')
+                  // お客様が自分の意思で選び直したので、直前の「無言で差し替わった」注意喚起はもう不要
+                  setCourseUnavailableNotice(false)
                   // コースが変わると滞在時間・残席計算の前提が変わるため、別コースの古い残席情報を
                   // 一瞬でも見せてしまわないようクリアする（時間を選び直すまで表示しない）
                   setAvail(null)
@@ -2795,7 +2873,7 @@ export default function Home() {
                     setSelDate(''); setSelTime(''); setSelGuest(''); setSelCourse(0)
                     setIsKasshiki(false); setIsKonsult(false); setShowKasshikiWarning(false)
                     setQ1(''); setQ1Other(''); setQ3(''); setQ3Other(''); setNotes(''); setShowOptional(true)
-                    setAvail(null); setAvailErr(''); setInputErr('')
+                    setAvail(null); setAvailErr(''); setInputErr(''); setCourseUnavailableNotice(false)
                     // selGuestは''にリセットしていたが、同伴者情報（companions）は人数変更時のuseEffectが
                     // 配列を「切り詰める」だけで内容をクリアしないため、ここで明示的にリセットしないと
                     // 前の予約の同伴者名・アレルギー情報が次の別予約に持ち越されてしまっていた
@@ -3108,7 +3186,15 @@ export default function Home() {
               電話番号入力待ち・読み込み中・エラー中は出さず、マイ予約本体の表示が確定した後にだけ出す。 */}
           {!myResNeedsPhone && !myResLoading && !myResErr && myWaitlist.length > 0 && (
             <div style={{ marginTop: 20 }}>
-              <h3 style={{ fontSize: 14, color: 'var(--sub)', marginBottom: 8 }}>{t('🕒 キャンセル待ち登録中')}</h3>
+              <h3 style={{ fontSize: 14, color: 'var(--sub)', marginBottom: 4 }}>{t('🕒 キャンセル待ち登録中')}</h3>
+              {/* このセクション自体が何なのか（満席日にキャンセル待ちを申し込んだ記録であり、空きが
+                  出れば連絡が来る）を、初めて見るお客様向けに一言添える。登録直後の画面（wlDone、
+                  2333行目付近）には既に同じ趣旨の案内があるが、後日「マイ予約」を開き直した時には
+                  何も残っておらず、この一覧だけを見ても意味が伝わらなかった（ランダム客層視点
+                  レビュー・ラウンド47での指摘）。 */}
+              <p style={{ fontSize: 12, color: 'var(--sub)', marginTop: 0, marginBottom: 8, lineHeight: 1.6 }}>
+                {t('満席のためキャンセル待ちにご登録いただいた内容です。空きが出た場合はご登録の連絡先へお知らせします（先着順のため必ずご案内できるとは限りません）。')}
+              </p>
               {myWaitlist.map((wl) => (
                 <div key={wl.id} className="res-card">
                   <div className="res-date">{fmtDateLang(wl.date, lang)}</div>
@@ -3116,14 +3202,18 @@ export default function Home() {
                     {wl.time ? `⏰ ${fmtTime(wl.time)}　` : ''}{wl.guests ? `👥 ${guestsDisplay(wl.guests)}` : ''}
                     {wl.staff ? <><br />🔖 {t('ご指名')}：{wl.staff}</> : null}
                   </div>
+                  {wl.cancelled ? (
+                    <div role="status" style={{ marginTop: 8, color: 'var(--red)', fontSize: 13, fontWeight: 'bold' }}>{t('✕ 取り消しました')}</div>
+                  ) : (
                   <div className="res-actions">
                     <button className="btn-cnl" onClick={() => { setWlCancelConfirmId(wl.id); setWlCancelErr('') }}>{t('取り消す')}</button>
                   </div>
+                  )}
                   {wlCancelConfirmId === wl.id && (
                     <div className="cnl-confirm" role="alertdialog" aria-labelledby={`wl-msg-cancel-${wl.id}`}>
                       <p className="cnl-msg" id={`wl-msg-cancel-${wl.id}`}>{t('このキャンセル待ち登録を取り消しますか？')}</p>
                       <div className="cnl-btns">
-                        <button className="cnl-yes" disabled={wlCancelingId === wl.id} onClick={() => execWaitlistCancel(wl.id)}>
+                        <button className="cnl-yes" ref={el => { cnlYesRefs.current[`wl-cancel-${wl.id}`] = el }} disabled={wlCancelingId === wl.id} onClick={() => execWaitlistCancel(wl.id)}>
                           {wlCancelingId === wl.id ? t('処理中...') : t('はい')}
                         </button>
                         <button className="cnl-no" disabled={!!wlCancelingId} onClick={() => { setWlCancelConfirmId(null); setWlCancelErr('') }}>{t('いいえ')}</button>
