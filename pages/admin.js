@@ -1338,6 +1338,11 @@ export default function Admin() {
   const isOwner = myRole === 'owner'
   // スタッフ個人アカウントの管理（店長のみ）
   const [staffAccounts, setStaffAccounts] = useState([])
+  // 取得中かどうかを表すstateが無く、初回読み込み中も「個人アカウントは登録されていません」という
+  // 空状態メッセージがそのまま出てしまっていた（操作ログ／キャンセル待ち／ゴミ箱の各パネルは
+  // 同じ構造でloading分岐を持っているのに、ここだけ欠けていた——テストマラソン・ラウンド54での指摘）。
+  // 実際にはアカウントがあるお店でも、ログイン直後の一瞬だけ「登録されていません」と誤表示されうる。
+  const [staffAccountsLoading, setStaffAccountsLoading] = useState(false)
   const [staffAccountsLoadError, setStaffAccountsLoadError] = useState('')
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [editingAccountId, setEditingAccountId] = useState(null)
@@ -1402,6 +1407,13 @@ export default function Admin() {
   const [seatBlocks,    setSeatBlocks]    = useState([])
   const [dateOverrides, setDateOverrides] = useState([])
   const [blockLoading,  setBlockLoading]  = useState(false)
+  // 休業日・受付停止枠は取得失敗時もr.list||[]で空配列に丸めており、「本当に休業日が無い」状態と
+  // 「取得できていないだけ」の状態が見分けられなかった（カレンダー診断パネルでラウンド29に同種の穴が
+  // 見つかり修正済みだったが、こちらの2つには適用されていなかった——テストマラソン・ラウンド54での指摘）。
+  // 休業日を「無い」と誤解したまま予約を進めると実際には休業日の二重ブッキングにつながりうるため、
+  // カレンダー凡例の下に警告バナーを出す。
+  const [blockLoadError,     setBlockLoadError]     = useState('')
+  const [seatBlocksLoadError, setSeatBlocksLoadError] = useState('')
   const [closedDayAdding, setClosedDayAdding] = useState(false)
 
   // ── System status（通知の自動停止セーフティ）────
@@ -1902,16 +1914,18 @@ export default function Admin() {
     setBlockLoading(true)
     try {
       const r = await api.adminGetBlockedDates()
-      setBlocked(r.list || [])
-    } catch { setBlocked([]) }
+      if (r.success !== false) { setBlocked(r.list || []); setBlockLoadError('') }
+      else { setBlocked([]); setBlockLoadError(friendlyServerError(r, '休業日の取得に失敗しました')) }
+    } catch { setBlocked([]); setBlockLoadError('通信エラーが発生しました。もう一度お試しください') }
     setBlockLoading(false)
   }
 
   async function loadSeatBlocks() {
     try {
       const r = await api.adminGetSeatBlocks()
-      setSeatBlocks(r.list || [])
-    } catch { setSeatBlocks([]) }
+      if (r.success !== false) { setSeatBlocks(r.list || []); setSeatBlocksLoadError('') }
+      else { setSeatBlocks([]); setSeatBlocksLoadError(friendlyServerError(r, '受付停止枠の取得に失敗しました')) }
+    } catch { setSeatBlocks([]); setSeatBlocksLoadError('通信エラーが発生しました。もう一度お試しください') }
   }
 
   async function loadDateOverrides() {
@@ -1931,11 +1945,13 @@ export default function Admin() {
   }
 
   async function loadStaffAccounts() {
+    setStaffAccountsLoading(true)
     try {
       const r = await api.adminGetStaffAccounts()
       if (r.success) { setStaffAccounts(r.list || []); setStaffAccountsLoadError('') }
       else { setStaffAccounts([]); setStaffAccountsLoadError(friendlyServerError(r, 'スタッフアカウントの取得に失敗しました')) }
     } catch { setStaffAccounts([]); setStaffAccountsLoadError('通信エラーが発生しました。もう一度お試しください') }
+    setStaffAccountsLoading(false)
   }
 
   async function saveStaffAccount() {
@@ -2916,6 +2932,15 @@ export default function Admin() {
                 <span><span style={{ display:'inline-block', width:10, height:10, background:'var(--warning-bg)', borderRadius:2, marginRight:3 }}></span>停止枠あり</span>
                 <span><span style={{ display:'inline-block', width:10, height:10, background:'var(--danger-bg)', borderRadius:2, marginRight:3 }}></span>休業日</span>
               </div>
+              {/* 休業日・受付停止枠の取得に失敗すると、この凡例の色分けが「実際は休業日/停止枠がある」
+                  日にも付かなくなり、見た目上は普通に予約できる日と区別が付かない（テストマラソン・
+                  ラウンド54での指摘）。カレンダー診断パネルのcalDayEventsErrorと同じ考え方で、
+                  取得失敗をここで明示する。 */}
+              {(blockLoadError || seatBlocksLoadError) && (
+                <div style={{ background:'var(--warning-bg)', border:'1px solid var(--warning-border)', borderRadius:8, padding:'8px 12px', marginTop:10, fontSize:12, color:'var(--warning-text)' }}>
+                  ⚠️ {blockLoadError || seatBlocksLoadError}（休業日・受付停止枠がこのカレンダー上で正しく表示できていない可能性があります。もう一度お試しください）
+                </div>
+              )}
               {!resLoading && reservations.length > 0 && (() => {
                 const confirmed = reservations.filter(r => r.status === '確定')
                 const cancelled = reservations.filter(r => r.status === 'キャンセル')
@@ -3555,7 +3580,9 @@ export default function Admin() {
                 <div style={{ background:'var(--bg-card)', borderRadius:12, padding:20, marginBottom:12, boxShadow:'0 1px 3px var(--shadow-sm)' }}>
                   <h2 style={{ fontSize:15, fontWeight:'bold', marginBottom:6 }}>スタッフ個人ログイン</h2>
                   <div style={{ fontSize:12, color:'var(--text-muted)', marginBottom:14 }}>店舗共通のパスワードに加えて、スタッフ個人の名前＋パスワードでログインできるアカウントを作成できます。「店長」は全操作可、「スタッフ」は予約の登録・確認・変更のみ可能です（設定変更・価格変更・顧客データダウンロード等はできません）。操作ログにも個人の名前が記録されます。作らなくても、これまで通り共通パスワードでのログイン（店長として扱われます）は使えます。</div>
-                  {staffAccountsLoadError ? (
+                  {staffAccountsLoading ? (
+                    <div style={{ textAlign:'center', padding:'12px 0', color:'var(--text-faint)', fontSize:13 }}>読み込み中...</div>
+                  ) : staffAccountsLoadError ? (
                     <div style={{ textAlign:'center', padding:'12px 0', color:'var(--danger-solid)', fontSize:13 }}>{staffAccountsLoadError}</div>
                   ) : staffAccounts.length === 0 ? (
                     <div style={{ textAlign:'center', padding:'12px 0', color:'var(--text-faint)', fontSize:13 }}>個人アカウントは登録されていません</div>
